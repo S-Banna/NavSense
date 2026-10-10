@@ -158,6 +158,9 @@ class Session:
         self.lat = {k: deque(maxlen=300) for k in ("cam_enc", "enc_send", "net", "dec", "e2e", "imu")}
         self.snap = (time.time(), 0, 0, 0, 0)
         self.last_print = 0.0
+        self.frames_dir = self.dir / "frames"
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
+        self.frame_index = 0
 
     def handle(self, h, payload):
         now_ms = time.time() * 1e3
@@ -202,13 +205,22 @@ class Session:
         frames = self.decode(payload)
         dec_ms = (time.perf_counter() - t) * 1e3
         for f in frames:
-            self.lat["dec"].append(dec_ms)
+            img = f.to_ndarray(format="bgr24")
+
+            # Save each decoded frame as a JPEG.
+            self.frame_index += 1
+            filename = self.frames_dir / f"frame_{self.frame_index:06d}.jpg"
+            cv2.imwrite(str(filename), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
             if self.display:
-                cv2.imshow("NavSense", f.to_ndarray(format="bgr24"))
+                cv2.imshow("NavSense", img)
                 k = cv2.waitKey(1) & 0xFF
                 if k != 255 and self.ctrl:
-                    self.ctrl.key(chr(k))               # any key here too; non-wad = stop
-            self.lat["e2e"].append(time.time() * 1e3 - (cam - self.mono_off))
+                    self.ctrl.key(chr(k))
+
+            self.lat["e2e"].append(
+                time.time() * 1e3 - (cam - self.mono_off)
+            )
 
     def on_imu(self, h, now_ms):
         s = h["samples"]
