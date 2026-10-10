@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private var video: VideoStreamer? = null
     private var imu: ImuStreamer? = null
     private val ui = Handler(Looper.getMainLooper())
+    private var car: CarLink? = null
     @Volatile private var streaming = false
     private var lastFrames = 0L
     private var lastBytes = 0L
@@ -90,8 +91,9 @@ class MainActivity : AppCompatActivity() {
             if (!streaming) return
             val f = video?.frames?.get() ?: 0L
             val b = client?.bytesSent?.get() ?: 0L
-            status.text = "%s | %d fps | %.1f Mbps | dropped %d".format(
-                video?.sizeText ?: "", f - lastFrames, (b - lastBytes) * 8 / 1e6, client?.dropped ?: 0L
+            status.text = "%s | %d fps | %.1f Mbps | dropped %d | car: %s".format(
+                video?.sizeText ?: "", f - lastFrames, (b - lastBytes) * 8 / 1e6, client?.dropped ?: 0L,
+                car?.summary ?: "-"
             )
             lastFrames = f; lastBytes = b
             ui.postDelayed(this, 1000)
@@ -125,12 +127,17 @@ class MainActivity : AppCompatActivity() {
         start.isEnabled = false
         stop.isEnabled = true
         status.text = "Connecting..."
+        car = CarLink(this).also { it.connect() }
         client = NavSenseClient(
             h, p,
             onStatus = { s -> runOnUiThread { status.text = s } },
-            onStart = { runOnUiThread { beginStreaming() } },   // laptop says go after clock sync
-            onLost = { runOnUiThread { stopLogging("Connection lost") } }
+            onStart = { runOnUiThread { beginStreaming() } },
+            onLost = { runOnUiThread { stopLogging("Connection lost") } },
+            onCommand = { c -> car?.command(c.firstOrNull() ?: 's') }
         ).also { it.start() }
+        car?.onReply = { t ->
+            client?.sendJson("""{"type":"car_reply","text":${org.json.JSONObject.quote(t)}}""")
+        }
     }
 
     private fun beginStreaming() {
@@ -149,6 +156,7 @@ class MainActivity : AppCompatActivity() {
         ui.removeCallbacks(ticker)
         imu?.stop(); imu = null
         video?.stop(); video = null
+        car?.close(); car = null
         client?.close(); client = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         start.isEnabled = true
@@ -464,7 +472,8 @@ class NavSenseClient(
     private val port: Int,
     private val onStatus: (String) -> Unit,
     private val onStart: () -> Unit,
-    private val onLost: () -> Unit
+    private val onLost: () -> Unit,
+    private val onCommand: (String) -> Unit = {}
 ) {
     @Volatile private var closed = false
     private var socket: Socket? = null
@@ -553,6 +562,8 @@ class NavSenseClient(
                 } else if (msg.contains("\"type\":\"start\"")) {
                     onStatus("Clocks synced, starting streams")
                     onStart()
+                } else if (msg.contains("\"type\":\"cmd\"")) {
+                    onCommand(org.json.JSONObject(msg).optString("c", "s"))
                 }
             }
         } catch (e: Exception) {
