@@ -52,9 +52,9 @@ object Cfg {
     const val FPS = 30
     // Largest size the camera AND the encoder both support at 30 fps, up to this cap.
     // Raise to 3840/2160 to let the hardware decide; expect more latency + bandwidth.
-    const val MAX_W = 1920
-    const val MAX_H = 1080
-    const val BITS_PER_PIXEL = 0.12          // 1080p30 -> ~7.5 Mbps
+    const val MAX_W = 1280
+    const val MAX_H = 720
+    const val BITS_PER_PIXEL = 0.15
     const val ENABLE_PREVIEW = true          // set false to save power/CPU
 
     const val IMU_PERIOD_US = 5000           // 200 Hz per sensor (max without HIGH_SAMPLING_RATE_SENSORS)
