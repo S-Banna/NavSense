@@ -7,9 +7,7 @@ DRIVE:  w / a / d = go.   EVERY other key (space, s, Enter, Esc, anything) = STO
         Keys are read from this terminal (Windows) and from the video window.
         A heartbeat is sent 10x/s from its own thread; the phone stops the car if it goes quiet.
 
-Saves per session: camera/<t_cam_ns>.jpg (decoded frames, named by capture time on the phone's
-clock = same clock as imu.jsonl t_ns), video.h264 (raw stream backup), video.jsonl, imu.jsonl,
-events.jsonl (incl. car replies).
+Saves per session: video.h264, video.jsonl, imu.jsonl, events.jsonl (incl. car replies).
 """
 import argparse
 import json
@@ -138,7 +136,7 @@ class Control:
 
 
 class Session:
-    def __init__(self, root, mono_off, decode, display, ctrl=None, frames_fmt="jpg", jpg_q=95):
+    def __init__(self, root, mono_off, decode, display, ctrl=None):
         self.dir = Path(root) / time.strftime("%Y%m%d_%H%M%S")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.video = open(self.dir / "video.h264", "wb")
@@ -147,8 +145,6 @@ class Session:
         self.events = open(self.dir / "events.jsonl", "w", buffering=1)
         self.mono_off = mono_off
         self.ctrl = ctrl
-        self.frames_fmt, self.jpg_q = frames_fmt, jpg_q
-        self.camera_dir = self.dir / "camera"
         self.display = display and cv2 is not None
         self.decoder = None
         if decode and av is not None:
@@ -157,11 +153,6 @@ class Session:
                 self.decoder.thread_type = "SLICE"   # frame threading would add frames of delay
             except Exception:
                 pass
-        self.save_frames = frames_fmt != "none" and cv2 is not None and self.decoder is not None
-        if frames_fmt != "none" and not self.save_frames:
-            print("WARNING: saving images needs PyAV and OpenCV installed; not saving frames")
-        if self.save_frames:
-            self.camera_dir.mkdir(exist_ok=True)
         self.n_video = self.n_imu = self.n_pkts = self.bytes = 0
         self.dropped = 0
         self.lat = {k: deque(maxlen=300) for k in ("cam_enc", "enc_send", "net", "dec", "e2e", "imu")}
@@ -186,14 +177,11 @@ class Session:
             h["laptop_rx_ms"] = now_ms
             self.events.write(json.dumps(h, separators=(",", ":")) + "\n")
 
-    def decode(self, payload, pts=None):
+    def decode(self, payload):
         if not self.decoder:
             return []
         try:
-            pkt = av.Packet(payload)
-            if pts is not None:
-                pkt.pts = pts          # capture time rides along and comes back on the decoded frame
-            return self.decoder.decode(pkt)
+            return self.decoder.decode(av.Packet(payload))
         except Exception:
             return []  # e.g. joined mid-GOP; recovers at next keyframe
 
@@ -211,24 +199,16 @@ class Session:
         h["laptop_rx_ms"] = now_ms
         self.vindex.write(json.dumps(h, separators=(",", ":")) + "\n")
         t = time.perf_counter()
-        frames = self.decode(payload, int(h["t_cam_ns"]))
+        frames = self.decode(payload)
         dec_ms = (time.perf_counter() - t) * 1e3
         for f in frames:
-            ts = f.pts if f.pts is not None else int(h["t_cam_ns"])   # capture time, ns, phone clock
             self.lat["dec"].append(dec_ms)
-            img = f.to_ndarray(format="bgr24") if (self.display or self.save_frames) else None
             if self.display:
-                cv2.imshow("NavSense", img)
+                cv2.imshow("NavSense", f.to_ndarray(format="bgr24"))
                 k = cv2.waitKey(1) & 0xFF
                 if k != 255 and self.ctrl:
                     self.ctrl.key(chr(k))               # any key here too; non-wad = stop
-            self.lat["e2e"].append(time.time() * 1e3 - (ts / 1e6 - self.mono_off))
-            if self.save_frames:
-                path = str(self.camera_dir / f"{ts}.{self.frames_fmt}")
-                if self.frames_fmt == "jpg":
-                    cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, self.jpg_q])
-                else:
-                    cv2.imwrite(path, img)
+            self.lat["e2e"].append(time.time() * 1e3 - (cam - self.mono_off))
 
     def on_imu(self, h, now_ms):
         s = h["samples"]
@@ -270,8 +250,7 @@ def handle_client(conn, addr, args):
         print("Phone hello:", hello)
         rtt, wall_off, mono_off = calibrate(conn)
         print(f"Clock sync: best RTT {rtt:.1f} ms | wall offset {wall_off:+.1f} ms | mono offset {mono_off:+.1f} ms")
-        session = Session(args.output, mono_off, not args.no_decode, not args.no_display,
-                          frames_fmt=args.frames, jpg_q=args.jpg_quality)
+        session = Session(args.output, mono_off, not args.no_decode, not args.no_display)
         if av is None:
             print("(PyAV not installed: recording only, no decode/latency for display)")
         send_record(conn, {"type": "start"})   # phone begins camera + IMU only now
@@ -302,9 +281,6 @@ def main():
     ap.add_argument("--output", default="sessions")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--no-decode", action="store_true")
-    ap.add_argument("--frames", choices=["jpg", "png", "none"], default="jpg",
-                    help="save decoded frames as images (default jpg; png is lossless but slower/larger)")
-    ap.add_argument("--jpg-quality", type=int, default=95)
     args = ap.parse_args()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
