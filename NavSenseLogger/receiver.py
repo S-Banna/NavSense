@@ -7,7 +7,10 @@ DRIVE:  w / a / d = go.   EVERY other key (space, s, Enter, Esc, anything) = STO
         Keys are read from this terminal (Windows) and from the video window.
         A heartbeat is sent 10x/s from its own thread; the phone stops the car if it goes quiet.
 
-Saves per session: video.h264, video.jsonl, imu.jsonl, events.jsonl (incl. car replies).
+Frames are decoded as they arrive, rotated to portrait, and written straight to JPG.
+Saves per session: camera/<t_cam_ns>.jpg (decoded frames, named by capture time on the phone's
+clock = same clock as imu.jsonl t_ns), video.h264 (raw stream backup), video.jsonl, imu.jsonl,
+events.jsonl (incl. car replies).
 """
 import argparse
 import json
@@ -136,15 +139,20 @@ class Control:
 
 
 class Session:
-    def __init__(self, root, mono_off, decode, display, ctrl=None):
+    def __init__(self, root, mono_off, decode, display, ctrl=None, frames_fmt="jpg", jpg_q=95,
+                 rotate="auto", save_h264=True):
         self.dir = Path(root) / time.strftime("%Y%m%d_%H%M%S")
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.video = open(self.dir / "video.h264", "wb")
+        self.video = open(self.dir / "video.h264", "wb") if save_h264 else None
         self.vindex = open(self.dir / "video.jsonl", "w")
         self.imu = open(self.dir / "imu.jsonl", "w")
         self.events = open(self.dir / "events.jsonl", "w", buffering=1)
         self.mono_off = mono_off
         self.ctrl = ctrl
+        self.frames_fmt, self.jpg_q = frames_fmt, jpg_q
+        self.rotate = rotate                 # "auto" = upright portrait via the camera's sensor orientation
+        self.sensor_orientation = 90         # used until the phone reports it (typical for back cameras)
+        self.camera_dir = self.dir / "camera"
         self.display = display and cv2 is not None
         self.decoder = None
         if decode and av is not None:
@@ -153,14 +161,16 @@ class Session:
                 self.decoder.thread_type = "SLICE"   # frame threading would add frames of delay
             except Exception:
                 pass
+        self.save_frames = frames_fmt != "none" and cv2 is not None and self.decoder is not None
+        if frames_fmt != "none" and not self.save_frames:
+            print("WARNING: saving images needs PyAV and OpenCV installed; not saving frames")
+        if self.save_frames:
+            self.camera_dir.mkdir(exist_ok=True)
         self.n_video = self.n_imu = self.n_pkts = self.bytes = 0
         self.dropped = 0
         self.lat = {k: deque(maxlen=300) for k in ("cam_enc", "enc_send", "net", "dec", "e2e", "imu")}
         self.snap = (time.time(), 0, 0, 0, 0)
         self.last_print = 0.0
-        self.frames_dir = self.dir / "frames"
-        self.frames_dir.mkdir(parents=True, exist_ok=True)
-        self.frame_index = 0
 
     def handle(self, h, payload):
         now_ms = time.time() * 1e3
@@ -173,6 +183,8 @@ class Session:
         else:
             if typ == "video_info":
                 print("\nVideo:", h)
+                if h.get("sensor_orientation") is not None:
+                    self.sensor_orientation = int(h["sensor_orientation"])
                 if h.get("ts_source") != "realtime":
                     print("WARNING: camera timestamps not REALTIME; cam->enc/e2e numbers are unreliable")
             elif typ == "car_reply":
@@ -180,16 +192,27 @@ class Session:
             h["laptop_rx_ms"] = now_ms
             self.events.write(json.dumps(h, separators=(",", ":")) + "\n")
 
-    def decode(self, payload):
+    def orient(self, img):
+        """Rotate the landscape sensor image to upright portrait (or a forced angle)."""
+        deg = self.sensor_orientation if self.rotate == "auto" else int(self.rotate)
+        code = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
+                270: cv2.ROTATE_90_COUNTERCLOCKWISE}.get(deg % 360)
+        return cv2.rotate(img, code) if code is not None else img
+
+    def decode(self, payload, pts=None):
         if not self.decoder:
             return []
         try:
-            return self.decoder.decode(av.Packet(payload))
+            pkt = av.Packet(payload)
+            if pts is not None:
+                pkt.pts = pts          # capture time rides along and comes back on the decoded frame
+            return self.decoder.decode(pkt)
         except Exception:
             return []  # e.g. joined mid-GOP; recovers at next keyframe
 
     def on_video(self, h, payload, now_ms):
-        self.video.write(payload)
+        if self.video:
+            self.video.write(payload)
         if h.get("config"):
             self.decode(payload)
             return
@@ -202,25 +225,26 @@ class Session:
         h["laptop_rx_ms"] = now_ms
         self.vindex.write(json.dumps(h, separators=(",", ":")) + "\n")
         t = time.perf_counter()
-        frames = self.decode(payload)
+        frames = self.decode(payload, int(h["t_cam_ns"]))
         dec_ms = (time.perf_counter() - t) * 1e3
         for f in frames:
-            img = f.to_ndarray(format="bgr24")
-
-            # Save each decoded frame as a JPEG.
-            self.frame_index += 1
-            filename = self.frames_dir / f"frame_{self.frame_index:06d}.jpg"
-            cv2.imwrite(str(filename), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-
+            ts = f.pts if f.pts is not None else int(h["t_cam_ns"])   # capture time, ns, phone clock
+            self.lat["dec"].append(dec_ms)
+            img = f.to_ndarray(format="bgr24") if (self.display or self.save_frames) else None
+            if img is not None:
+                img = self.orient(img)
             if self.display:
                 cv2.imshow("NavSense", img)
                 k = cv2.waitKey(1) & 0xFF
                 if k != 255 and self.ctrl:
-                    self.ctrl.key(chr(k))
-
-            self.lat["e2e"].append(
-                time.time() * 1e3 - (cam - self.mono_off)
-            )
+                    self.ctrl.key(chr(k))               # any key here too; non-wad = stop
+            self.lat["e2e"].append(time.time() * 1e3 - (ts / 1e6 - self.mono_off))
+            if self.save_frames:
+                path = str(self.camera_dir / f"{ts}.{self.frames_fmt}")
+                if self.frames_fmt == "jpg":
+                    cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, self.jpg_q])
+                else:
+                    cv2.imwrite(path, img)
 
     def on_imu(self, h, now_ms):
         s = h["samples"]
@@ -249,7 +273,8 @@ class Session:
 
     def close(self):
         for f in (self.video, self.vindex, self.imu, self.events):
-            f.close()
+            if f:
+                f.close()
 
 
 def handle_client(conn, addr, args):
@@ -262,7 +287,9 @@ def handle_client(conn, addr, args):
         print("Phone hello:", hello)
         rtt, wall_off, mono_off = calibrate(conn)
         print(f"Clock sync: best RTT {rtt:.1f} ms | wall offset {wall_off:+.1f} ms | mono offset {mono_off:+.1f} ms")
-        session = Session(args.output, mono_off, not args.no_decode, not args.no_display)
+        session = Session(args.output, mono_off, not args.no_decode, not args.no_display,
+                          frames_fmt=args.frames, jpg_q=args.jpg_quality,
+                          rotate=args.rotate, save_h264=not args.no_h264)
         if av is None:
             print("(PyAV not installed: recording only, no decode/latency for display)")
         send_record(conn, {"type": "start"})   # phone begins camera + IMU only now
@@ -293,6 +320,12 @@ def main():
     ap.add_argument("--output", default="sessions")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--no-decode", action="store_true")
+    ap.add_argument("--frames", choices=["jpg", "png", "none"], default="jpg",
+                    help="save decoded frames as images (default jpg; png is lossless but slower/larger)")
+    ap.add_argument("--jpg-quality", type=int, default=95)
+    ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="auto",
+                    help="auto = upright portrait from the camera's sensor orientation; or force degrees clockwise")
+    ap.add_argument("--no-h264", action="store_true", help="don't keep the raw video.h264 backup")
     args = ap.parse_args()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
