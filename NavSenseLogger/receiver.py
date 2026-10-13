@@ -8,7 +8,8 @@ DRIVE:  w / a / d = go.   EVERY other key (space, s, Enter, Esc, anything) = STO
         A heartbeat is sent 10x/s from its own thread; the phone stops the car if it goes quiet.
 
 Frames are decoded as they arrive, rotated to portrait, and written straight to JPG.
-Saves per session: camera/<t_cam_ns>.jpg (decoded frames, named by capture time on the phone's
+At session end an ORB-SLAM3 (EuRoC-style) dataset is exported automatically.
+Saves per session: mav0/cam0/data/<t_cam_ns>.jpg (decoded frames, named by capture time on the phone's
 clock = same clock as imu.jsonl t_ns), video.h264 (raw stream backup), video.jsonl, imu.jsonl,
 events.jsonl (incl. car replies).
 """
@@ -88,6 +89,176 @@ def med(d):
     return f"{sorted(d)[len(d) // 2]:5.1f}" if d else "  n/a"
 
 
+def r_body_cam(sensor_orientation, applied_cw):
+    """Rotation of the (OpenCV-convention) camera frame of the SAVED image, expressed in the Android
+    device/IMU frame (x right, y up, z out of the screen, phone held portrait). Back camera."""
+    import numpy as np
+
+    def M(d):
+        r = np.deg2rad(d)
+        c, s_ = round(float(np.cos(r))), round(float(np.sin(r)))   # exact for multiples of 90
+        return np.array([[c, s_], [-s_, c]], dtype=float)
+    N = M(sensor_orientation).T @ M(applied_cw)
+    xs = np.array([N[0, 0], -N[1, 0], 0.0])
+    ys = np.array([N[0, 1], -N[1, 1], 0.0])
+    zs = np.array([0.0, 0.0, -1.0])
+    return np.stack([xs, ys, zs], axis=1) + 0.0
+
+
+def export_euroc(sdir, timeshift_ms=0.0, static_seconds=0.0, noise_scale=5.0):
+    """Turn a finished session into an ORB-SLAM3-ready EuRoC-style dataset:
+         mav0/cam0/data/<ts_ns>.jpg   (already written live)   mav0/cam0/data.csv
+         mav0/imu0/data.csv           (accel+gyro merged onto gyro timestamps, EuRoC columns)
+         timestamps.txt, orbslam3_phone.yaml, sync_report.txt
+    """
+    import numpy as np
+    sdir = Path(sdir)
+    cam_dir = sdir / "mav0" / "cam0" / "data"
+    imu_dir = sdir / "mav0" / "imu0"
+    out = []
+
+    def say(msg=""):
+        out.append(msg)
+        print(msg)
+
+    files = sorted([f for f in cam_dir.glob("*") if f.suffix in (".jpg", ".png") and f.stem.isdigit()],
+                   key=lambda f: int(f.stem))
+    if not files or not (sdir / "imu.jsonl").exists():
+        print(f"\nexport: need camera frames in {cam_dir} and imu.jsonl; nothing to export")
+        return
+    ext = files[0].suffix
+    cam_t = np.array([int(f.stem) for f in files], dtype=np.int64)
+
+    at, av_, gt, gv = [], [], [], []
+    with open(sdir / "imu.jsonl") as f:
+        for line in f:
+            r = json.loads(line)
+            if r["sensor"] == "accelerometer":
+                at.append(r["t_ns"]); av_.append(r["v"])
+            elif r["sensor"] == "gyroscope":
+                gt.append(r["t_ns"]); gv.append(r["v"])
+    if len(at) < 10 or len(gt) < 10:
+        print("\nexport: not enough IMU samples")
+        return
+
+    def clean(t, v):
+        t = np.array(t, dtype=np.int64)
+        v = np.array(v, dtype=np.float64)
+        bad = int(np.sum(np.diff(t) <= 0))
+        o = np.argsort(t, kind="stable")
+        t, v = t[o], v[o]
+        keep = np.concatenate(([True], np.diff(t) > 0))
+        return t[keep], v[keep], bad
+    at, av_, bad_a = clean(at, av_)
+    gt, gv, bad_g = clean(gt, gv)
+
+    # Merge: ORB-SLAM3 wants one 6-axis sample per timestamp. Android reports accel and gyro
+    # separately with their own timestamps, so interpolate accel onto the gyro timestamps.
+    sel = (gt >= at[0]) & (gt <= at[-1])
+    mt, mg = gt[sel], gv[sel]
+    ma = np.stack([np.interp((mt - at[0]).astype(np.float64), (at - at[0]).astype(np.float64), av_[:, k])
+                   for k in range(3)], axis=1)
+    shift_ns = int(round(timeshift_ms * 1e6))
+    mt = mt - shift_ns      # Kalibr: t_imu = t_cam + shift  ->  express IMU on the camera clock
+
+    imu_dir.mkdir(parents=True, exist_ok=True)
+    with open(imu_dir / "data.csv", "w") as f:
+        f.write("#timestamp [ns],w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],w_RS_S_z [rad s^-1],"
+                "a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n")
+        for t, g, a in zip(mt, mg, ma):
+            f.write(f"{t},{g[0]:.9g},{g[1]:.9g},{g[2]:.9g},{a[0]:.9g},{a[1]:.9g},{a[2]:.9g}\n")
+
+    # Only frames fully covered by IMU (the stock loader needs an IMU sample before the first frame).
+    keep = (cam_t >= mt[0]) & (cam_t <= mt[-1])
+    ct = cam_t[keep]
+    with open(sdir / "mav0" / "cam0" / "data.csv", "w") as f:
+        f.write("#timestamp [ns],filename\n")
+        for t in ct:
+            f.write(f"{t},{t}{ext}\n")
+    with open(sdir / "timestamps.txt", "w") as f:
+        f.write("\n".join(str(t) for t in ct) + "\n")
+
+    # ---- diagnostics
+    dts = np.diff(mt) / 1e9
+    imu_hz = 1.0 / float(np.median(dts))
+    cdt = np.diff(ct) / 1e9
+    fps = 1.0 / float(np.median(cdt)) if len(cdt) else 0.0
+    per = np.diff(np.searchsorted(mt, ct)) if len(ct) > 1 else np.array([0])
+    gnorm = float(np.linalg.norm(ma, axis=1).mean())
+    say("\n=== ORB-SLAM3 sync report ===")
+    say(f"frames kept {len(ct)}/{len(cam_t)} | span {(ct[-1]-ct[0])/1e9:.1f} s | median fps {fps:.1f}")
+    say(f"IMU merged samples {len(mt)} | rate {imu_hz:.1f} Hz | raw accel {len(at)} / gyro {len(gt)} samples")
+    say(f"IMU samples between consecutive frames: min {per.min()} / median {int(np.median(per))} / max {per.max()}"
+        + ("   <-- zero-IMU intervals!" if per.min() == 0 else ""))
+    mg_cam = float(cdt.max()) if len(cdt) else 0.0
+    say(f"largest gap between frames: {mg_cam*1000:.0f} ms"
+        + ("   <-- >= ~1 s makes ORB-SLAM3 call it a timestamp jump and reset the map" if mg_cam >= 0.9 else
+           ("   <-- big gap, expect tracking trouble" if mg_cam > 0.25 else "")))
+    say(f"frames with gap > 100 ms: {int((cdt > 0.1).sum())}")
+    say(f"largest IMU gap: {dts.max()*1000:.0f} ms | IMU gaps > 20 ms: {int((dts > 0.02).sum())}"
+        f" | out-of-order/duplicate stamps removed: accel {bad_a}, gyro {bad_g}")
+    say(f"mean |accel| {gnorm:.2f} m/s^2 (expect ~9.8)"
+        + ("" if 9.0 < gnorm < 10.6 else "   <-- units/scale look wrong"))
+    if timeshift_ms:
+        say(f"applied camera-IMU timeshift {timeshift_ms:+.2f} ms (IMU stamps moved by {-timeshift_ms:+.2f} ms)")
+    else:
+        say("no camera-IMU timeshift applied (see --timeshift-ms; calibrate with Kalibr)")
+
+    # ---- noise + config
+    dt = float(np.median(dts))
+    if static_seconds > 0:
+        w = (mt - mt[0]) <= static_seconds * 1e9
+        ng = float(np.mean(np.std(mg[w], axis=0)) * np.sqrt(dt))
+        na = float(np.mean(np.std(ma[w], axis=0)) * np.sqrt(dt))
+        src = f"measured from first {static_seconds:g} s (phone must have been still)"
+    else:
+        ng, na, src = 1.7e-4, 2.0e-3, "EuRoC defaults"
+    ng, na = ng * noise_scale, na * noise_scale
+    gw, aw = 1.9393e-5 * noise_scale, 3.0e-3 * noise_scale
+    say(f"IMU noise: {src}, inflated x{noise_scale:g}: gyro {ng:.2e}, acc {na:.2e}, walks {gw:.2e}/{aw:.2e}")
+
+    meta = {}
+    if (sdir / "session_meta.json").exists():
+        meta = json.load(open(sdir / "session_meta.json"))
+    so, rot = int(meta.get("sensor_orientation", 90)), int(meta.get("rotation_cw_deg", 90))
+    R = r_body_cam(so, rot)
+    w_px = h_px = 0
+    if cv2 is not None:
+        im = cv2.imread(str(files[0]))
+        if im is not None:
+            h_px, w_px = im.shape[:2]
+    fx = fy = round(1.05 * min(w_px, h_px), 1) if w_px else 700.0
+
+    y = ["%YAML:1.0", 'File.version: "1.0"', "",
+         "# GENERATED by navsense_receiver. Items marked REPLACE need real calibration.", "",
+         'Camera.type: "PinHole"',
+         f"Camera1.fx: {fx}   # REPLACE: calibrate with a checkerboard at THIS resolution/orientation",
+         f"Camera1.fy: {fy}   # REPLACE",
+         f"Camera1.cx: {w_px / 2:.1f}   # REPLACE",
+         f"Camera1.cy: {h_px / 2:.1f}   # REPLACE",
+         "Camera1.k1: 0.0", "Camera1.k2: 0.0", "Camera1.p1: 0.0", "Camera1.p2: 0.0",
+         f"Camera.fps: {int(round(fps))}", "Camera.RGB: 0",
+         f"Camera.width: {w_px}", f"Camera.height: {h_px}", "",
+         "# camera -> body(IMU). Rotation derived from Android's device frame; TRANSLATION IS 0: REPLACE (Kalibr/measure)",
+         "IMU.T_b_c1: !!opencv-matrix", "   rows: 4", "   cols: 4", "   dt: f", "   data: [" +
+         ",\n          ".join(", ".join(f"{R[i, j]:.1f}" for j in range(3)) + ", 0.0" for i in range(3)) +
+         ",\n          0.0, 0.0, 0.0, 1.0]", "",
+         f"IMU.NoiseGyro: {ng:.4e}", f"IMU.NoiseAcc: {na:.4e}",
+         f"IMU.GyroWalk: {gw:.4e}", f"IMU.AccWalk: {aw:.4e}", f"IMU.Frequency: {imu_hz:.1f}", "",
+         "ORBextractor.nFeatures: 1200", "ORBextractor.scaleFactor: 1.2", "ORBextractor.nLevels: 8",
+         "ORBextractor.iniThFAST: 20", "ORBextractor.minThFAST: 7", "",
+         "Viewer.KeyFrameSize: 0.05", "Viewer.KeyFrameLineWidth: 1.0", "Viewer.GraphLineWidth: 0.9",
+         "Viewer.PointSize: 2.0", "Viewer.CameraSize: 0.08", "Viewer.CameraLineWidth: 3.0",
+         "Viewer.ViewpointX: 0.0", "Viewer.ViewpointY: -0.7", "Viewer.ViewpointZ: -1.8",
+         "Viewer.ViewpointF: 500.0", "Viewer.imageViewScale: 1.0"]
+    (sdir / "orbslam3_phone.yaml").write_text("\n".join(y) + "\n")
+    say(f"config: orbslam3_phone.yaml  ({w_px}x{h_px}, fps {int(round(fps))}, IMU {imu_hz:.0f} Hz, "
+        f"sensor orientation {so}, image rotation {rot})")
+    say("Intrinsics, distortion and the camera-IMU translation are PLACEHOLDERS; calibrate them.")
+    (sdir / "sync_report.txt").write_text("\n".join(out) + "\n")
+    print(f"export done -> {sdir}")
+
+
 class Control:
     """Holds the current drive command and sends it to the phone from its OWN thread.
     Only w/a/d move the car; any other key is a stop. Independent of video, so a stop
@@ -140,7 +311,7 @@ class Control:
 
 class Session:
     def __init__(self, root, mono_off, decode, display, ctrl=None, frames_fmt="jpg", jpg_q=95,
-                 rotate="auto", save_h264=True):
+                 rotate="auto", save_h264=True, export_opts=None):
         self.dir = Path(root) / time.strftime("%Y%m%d_%H%M%S")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.video = open(self.dir / "video.h264", "wb") if save_h264 else None
@@ -152,7 +323,8 @@ class Session:
         self.frames_fmt, self.jpg_q = frames_fmt, jpg_q
         self.rotate = rotate                 # "auto" = upright portrait via the camera's sensor orientation
         self.sensor_orientation = 90         # used until the phone reports it (typical for back cameras)
-        self.camera_dir = self.dir / "camera"
+        self.export_opts = export_opts
+        self.camera_dir = self.dir / "mav0" / "cam0" / "data"   # EuRoC layout: file name = capture time (ns)
         self.display = display and cv2 is not None
         self.decoder = None
         if decode and av is not None:
@@ -165,7 +337,7 @@ class Session:
         if frames_fmt != "none" and not self.save_frames:
             print("WARNING: saving images needs PyAV and OpenCV installed; not saving frames")
         if self.save_frames:
-            self.camera_dir.mkdir(exist_ok=True)
+            self.camera_dir.mkdir(parents=True, exist_ok=True)
         self.n_video = self.n_imu = self.n_pkts = self.bytes = 0
         self.dropped = 0
         self.lat = {k: deque(maxlen=300) for k in ("cam_enc", "enc_send", "net", "dec", "e2e", "imu")}
@@ -192,9 +364,13 @@ class Session:
             h["laptop_rx_ms"] = now_ms
             self.events.write(json.dumps(h, separators=(",", ":")) + "\n")
 
+    def applied_rotation(self):
+        """Clockwise degrees applied to the saved images relative to the landscape sensor image."""
+        return (self.sensor_orientation if self.rotate == "auto" else int(self.rotate)) % 360
+
     def orient(self, img):
         """Rotate the landscape sensor image to upright portrait (or a forced angle)."""
-        deg = self.sensor_orientation if self.rotate == "auto" else int(self.rotate)
+        deg = self.applied_rotation()
         code = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
                 270: cv2.ROTATE_90_COUNTERCLOCKWISE}.get(deg % 360)
         return cv2.rotate(img, code) if code is not None else img
@@ -275,6 +451,15 @@ class Session:
         for f in (self.video, self.vindex, self.imu, self.events):
             if f:
                 f.close()
+        try:
+            with open(self.dir / "session_meta.json", "w") as f:
+                json.dump({"sensor_orientation": self.sensor_orientation,
+                           "rotation_cw_deg": self.applied_rotation(),
+                           "frames_fmt": self.frames_fmt}, f)
+            if self.save_frames and self.export_opts is not None:
+                export_euroc(self.dir, **self.export_opts)
+        except Exception as e:
+            print(f"\nEuRoC export failed: {e}  (re-run with --export {self.dir})")
 
 
 def handle_client(conn, addr, args):
@@ -289,7 +474,8 @@ def handle_client(conn, addr, args):
         print(f"Clock sync: best RTT {rtt:.1f} ms | wall offset {wall_off:+.1f} ms | mono offset {mono_off:+.1f} ms")
         session = Session(args.output, mono_off, not args.no_decode, not args.no_display,
                           frames_fmt=args.frames, jpg_q=args.jpg_quality,
-                          rotate=args.rotate, save_h264=not args.no_h264)
+                          rotate=args.rotate, save_h264=not args.no_h264,
+                          export_opts=args.export_opts)
         if av is None:
             print("(PyAV not installed: recording only, no decode/latency for display)")
         send_record(conn, {"type": "start"})   # phone begins camera + IMU only now
@@ -326,7 +512,19 @@ def main():
     ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="auto",
                     help="auto = upright portrait from the camera's sensor orientation; or force degrees clockwise")
     ap.add_argument("--no-h264", action="store_true", help="don't keep the raw video.h264 backup")
+    ap.add_argument("--no-export", action="store_true", help="skip the automatic ORB-SLAM3/EuRoC export at session end")
+    ap.add_argument("--export", metavar="SESSION_DIR", help="re-run the export on an existing session folder and exit")
+    ap.add_argument("--timeshift-ms", type=float, default=0.0,
+                    help="Kalibr 'timeshift cam0 to imu0' in ms (t_imu = t_cam + shift); applied to IMU stamps")
+    ap.add_argument("--static-seconds", type=float, default=0.0,
+                    help="phone held still for the first N seconds: use them to estimate IMU noise")
+    ap.add_argument("--noise-scale", type=float, default=5.0, help="inflation factor on IMU noise values")
     args = ap.parse_args()
+    if args.export:
+        export_euroc(args.export, args.timeshift_ms, args.static_seconds, args.noise_scale)
+        return
+    args.export_opts = None if args.no_export else dict(
+        timeshift_ms=args.timeshift_ms, static_seconds=args.static_seconds, noise_scale=args.noise_scale)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((args.host, args.port))
