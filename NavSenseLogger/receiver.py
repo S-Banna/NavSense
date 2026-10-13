@@ -506,7 +506,7 @@ def main():
     ap.add_argument("--output", default="sessions")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--no-decode", action="store_true")
-    ap.add_argument("--frames", choices=["jpg", "png", "none"], default="jpg",
+    ap.add_argument("--frames", choices=["jpg", "png", "none"], default="png",
                     help="save decoded frames as images (default jpg; png is lossless but slower/larger)")
     ap.add_argument("--jpg-quality", type=int, default=95)
     ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="auto",
