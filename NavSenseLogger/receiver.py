@@ -11,7 +11,7 @@ Frames are decoded as they arrive, rotated to portrait, and written straight to 
 At session end an ORB-SLAM3 (EuRoC-style) dataset is exported automatically.
 Saves per session: mav0/cam0/data/<t_cam_ns>.jpg (decoded frames, named by capture time on the phone's
 clock = same clock as imu.jsonl t_ns), video.h264 (raw stream backup), video.jsonl, imu.jsonl,
-events.jsonl (incl. car replies).
+encoder.jsonl (wheel-encoder pulse counts from the Arduino, 10 Hz), events.jsonl (incl. car replies).
 """
 import argparse
 import json
@@ -318,6 +318,9 @@ class Session:
         self.vindex = open(self.dir / "video.jsonl", "w")
         self.imu = open(self.dir / "imu.jsonl", "w")
         self.events = open(self.dir / "events.jsonl", "w", buffering=1)
+        self.encoder = open(self.dir / "encoder.jsonl", "w", buffering=1)
+        self.n_enc = 0
+        self.enc_last = None                 # (left, right) cumulative pulse counts
         self.mono_off = mono_off
         self.ctrl = ctrl
         self.frames_fmt, self.jpg_q = frames_fmt, jpg_q
@@ -352,6 +355,8 @@ class Session:
             self.on_video(h, payload, now_ms)
         elif typ == "imu_batch":
             self.on_imu(h, now_ms)
+        elif typ == "encoder":
+            self.on_encoder(h, now_ms)
         else:
             if typ == "video_info":
                 print("\nVideo:", h)
@@ -431,6 +436,17 @@ class Session:
         self.n_pkts += 1
         self.lat["imu"].append(now_ms - (h["t_batch_ns"] / 1e6 - self.mono_off))
 
+    def on_encoder(self, h, now_ms):
+        """Cumulative pulse counts since Arduino boot. t_ns = phone elapsedRealtime at serial receipt
+        (same clock as imu.jsonl t_ns; includes USB/serial jitter). arduino_ms is the Arduino's own
+        millis(): use its deltas for accurate dt between samples, t_ns for aligning to IMU/camera."""
+        self.encoder.write(json.dumps(
+            {"t_ns": h.get("phone_rx_ns"), "arduino_ms": h["arduino_ms"],
+             "left": h["left"], "right": h["right"], "laptop_rx_ms": now_ms},
+            separators=(",", ":")) + "\n")
+        self.n_enc += 1
+        self.enc_last = (h["left"], h["right"])
+
     def maybe_print(self):
         now = time.time()
         if now - self.last_print < 1:
@@ -440,15 +456,16 @@ class Session:
         dt = max(now - t0, 1e-6)
         self.snap = (now, self.n_video, self.n_imu, self.n_pkts, self.bytes)
         L = self.lat
+        enc = f"L{self.enc_last[0]} R{self.enc_last[1]}" if self.enc_last else "n/a"
         print(
             f"\rVID {(self.n_video - v0) / dt:4.1f}fps {(self.bytes - b0) * 8 / dt / 1e6:5.1f}Mbps | "
             f"IMU {(self.n_imu - i0) / dt:4.0f}/s ({(self.n_pkts - p0) / dt:3.0f} pkt/s) | "
             f"ms: cam>enc {med(L['cam_enc'])} enc>send {med(L['enc_send'])} net {med(L['net'])} "
-            f"dec {med(L['dec'])} E2E {med(L['e2e'])} imu-net {med(L['imu'])} | drop {self.dropped} | hb {self.ctrl.sent if self.ctrl else 0}",
+            f"dec {med(L['dec'])} E2E {med(L['e2e'])} imu-net {med(L['imu'])} | ENC {enc} | drop {self.dropped} | hb {self.ctrl.sent if self.ctrl else 0}",
             end="", flush=True)
 
     def close(self):
-        for f in (self.video, self.vindex, self.imu, self.events):
+        for f in (self.video, self.vindex, self.imu, self.events, self.encoder):
             if f:
                 f.close()
         try:
@@ -518,7 +535,7 @@ def main():
                     help="Kalibr 'timeshift cam0 to imu0' in ms (t_imu = t_cam + shift); applied to IMU stamps")
     ap.add_argument("--static-seconds", type=float, default=0.0,
                     help="phone held still for the first N seconds: use them to estimate IMU noise")
-    ap.add_argument("--noise-scale", type=float, default=5.0, help="inflation factor on IMU noise values")
+    ap.add_argument("--noise-scale", type=float, default=5.0, help="inflation factor on IMU noise valuwes")
     args = ap.parse_args()
     if args.export:
         export_euroc(args.export, args.timeshift_ms, args.static_seconds, args.noise_scale)

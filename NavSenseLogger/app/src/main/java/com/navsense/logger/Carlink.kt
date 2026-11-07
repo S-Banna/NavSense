@@ -32,14 +32,22 @@ class CarLink(private val ctx: Context) {
     @Volatile var lastRx = '-'
     @Volatile var tx = 0L                 // commands written to the Arduino
     @Volatile var heard = 0L              // bytes received back from the Arduino
-    val summary: String get() = "$state | cmds=$rx '$lastRx' | wrote=$tx | heard=${heard}B"
+    @Volatile var encLeft = 0L            // latest cumulative pulse counts reported by the Arduino
+    @Volatile var encRight = 0L
+    @Volatile var encLines = 0L           // valid ENC lines parsed so far
+    val summary: String get() =
+        "$state | cmds=$rx '$lastRx' | wrote=$tx | heard=${heard}B | " +
+                if (encLines == 0L) "enc=-" else "enc L=$encLeft R=$encRight"
     var onReply: ((String) -> Unit)? = null
+    /** (arduino_ms, left_count, right_count, phone_rx_ns). Called on the serial IO thread. */
+    @Volatile var onEncoder: ((Long, Long, Long, Long) -> Unit)? = null
 
     private val thread = HandlerThread("car").apply { start() }
     private val handler = Handler(thread.looper)      // all serial writes are serialized here
     private val um = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
     private var port: UsbSerialPort? = null
     private var io: SerialInputOutputManager? = null
+    private val rxBuf = StringBuilder()           // serial chunks arrive split/merged; reassemble into lines
     private var last = 's'
     private var lastWriteMs = 0L
     private var receiverRegistered = false
@@ -89,9 +97,10 @@ class CarLink(private val ctx: Context) {
             // Some boards (CDC-ACM/native USB) won't talk until DTR is asserted; Uno-types reset here.
             try { p.setDTR(true); p.setRTS(true) } catch (_: Exception) {}
             port = p
+            rxBuf.setLength(0)
             // Keep draining the Arduino's replies so its TX never backs up; forward them to the laptop.
             io = SerialInputOutputManager(p, object : SerialInputOutputManager.Listener {
-                override fun onNewData(data: ByteArray) { heard += data.size; onReply?.invoke(String(data)) }
+                override fun onNewData(data: ByteArray) { onSerialData(data) }
                 override fun onRunError(e: Exception) { state = "serial error: ${e.message}" }
             }).also { it.start() }
             last = 's'
@@ -100,6 +109,39 @@ class CarLink(private val ctx: Context) {
         } catch (e: Exception) {
             state = "open failed: ${e.message}"
         }
+    }
+
+    /** Runs on the SerialInputOutputManager thread (the only toucher of rxBuf while the port is open). */
+    private fun onSerialData(data: ByteArray) {
+        val rxNs = SystemClock.elapsedRealtimeNanos()   // same clock as IMU/video stamps
+        heard += data.size
+        rxBuf.append(String(data, Charsets.US_ASCII))
+        while (true) {
+            val nl = rxBuf.indexOf("\n")
+            if (nl < 0) break
+            val line = rxBuf.substring(0, nl).trim()
+            rxBuf.delete(0, nl + 1)
+            if (line.isNotEmpty()) onSerialLine(line, rxNs)
+        }
+        if (rxBuf.length > 512) rxBuf.setLength(0)      // no newline in ages = garbage; don't grow forever
+    }
+
+    private fun onSerialLine(line: String, rxNs: Long) {
+        if (line.startsWith("ENC,")) {
+            // ENC,<arduino millis>,<left pulses>,<right pulses>  (10 Hz telemetry: never forwarded as car_reply)
+            val parts = line.split(',')
+            if (parts.size == 4) {
+                val ms = parts[1].toLongOrNull()
+                val l = parts[2].toLongOrNull()
+                val r = parts[3].toLongOrNull()
+                if (ms != null && l != null && r != null) {
+                    encLeft = l; encRight = r; encLines++
+                    onEncoder?.invoke(ms, l, r, rxNs)
+                }
+            }
+            return
+        }
+        onReply?.invoke(line + "\n")                   // "Ready...", "Both sides: FORWARD", etc.
     }
 
     /** Safe to call from any thread. */

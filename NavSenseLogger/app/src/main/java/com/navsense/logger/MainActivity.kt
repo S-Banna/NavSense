@@ -138,6 +138,14 @@ class MainActivity : AppCompatActivity() {
         car?.onReply = { t ->
             client?.sendJson("""{"type":"car_reply","text":${org.json.JSONObject.quote(t)}}""")
         }
+        // Wheel-encoder snapshots (cumulative pulses since Arduino boot, 10 Hz). Only once streaming
+        // has started so encoder.jsonl lines up with the IMU/video start. phone_rx_ns is on the
+        // elapsedRealtimeNanos clock, same as IMU t_ns.
+        car?.onEncoder = { arduinoMs, left, right, rxNs ->
+            if (streaming) client?.sendJson(
+                """{"type":"encoder","arduino_ms":$arduinoMs,"left":$left,"right":$right,"phone_rx_ns":$rxNs}"""
+            )
+        }
     }
 
     private fun beginStreaming() {
