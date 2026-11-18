@@ -57,11 +57,16 @@ object Cfg {
     const val BITS_PER_PIXEL = 0.15
     const val ENABLE_PREVIEW = true          // set false to save power/CPU
 
+    const val LOCK_FOCUS = true              // fixed focus keeps the camera intrinsics valid
+    const val FOCUS_DIOPTERS = 1.0f          // 1.0 = focused at ~1 m; 0 = infinity. Calibrate with the same value.
+
     const val IMU_PERIOD_US = 5000           // 200 Hz per sensor (max without HIGH_SAMPLING_RATE_SENSORS)
     const val IMU_SAMPLES_PER_SENSOR_PER_PACKET = 2   // -> 100 packets/s
     const val SEND_MAGNETOMETER = false
 
-    const val MAX_VIDEO_BACKLOG_BYTES = 2_000_000L    // beyond this, drop P-frames until next keyframe
+    // Beyond this much queued video the phone drops P-frames until the next keyframe (leaves ~1 s gaps that make
+    // SLAM reset). Raise to 8_000_000L for mapping runs: fewer gaps, more lag when the Wi-Fi is bad.
+    const val MAX_VIDEO_BACKLOG_BYTES = 2_000_000L
 }
 
 class VideoPacket(
@@ -138,13 +143,8 @@ class MainActivity : AppCompatActivity() {
         car?.onReply = { t ->
             client?.sendJson("""{"type":"car_reply","text":${org.json.JSONObject.quote(t)}}""")
         }
-        // Wheel-encoder snapshots (cumulative pulses since Arduino boot, 10 Hz). Only once streaming
-        // has started so encoder.jsonl lines up with the IMU/video start. phone_rx_ns is on the
-        // elapsedRealtimeNanos clock, same as IMU t_ns.
-        car?.onEncoder = { arduinoMs, left, right, rxNs ->
-            if (streaming) client?.sendJson(
-                """{"type":"encoder","arduino_ms":$arduinoMs,"left":$left,"right":$right,"phone_rx_ns":$rxNs}"""
-            )
+        car?.onEncoder = { tNs, ms, l, r ->
+            client?.sendJson("""{"type":"encoder","t_ns":$tNs,"ard_ms":$ms,"left":$l,"right":$r}""")
         }
     }
 
@@ -198,6 +198,12 @@ class ImuStreamer(private val sm: SensorManager, private val client: NavSenseCli
             if (sm.registerListener(this, s, Cfg.IMU_PERIOD_US, h)) active++
         }
         target = maxOf(1, active * Cfg.IMU_SAMPLES_PER_SENSOR_PER_PACKET)
+
+        // Tell the laptop which sensors this phone really has (a missing/fake gyro shows up here).
+        val info = types.mapNotNull { sm.getDefaultSensor(it) }.joinToString(",") { s ->
+            """{"type":${s.type},"name":"${s.name.replace("\"", "")}","vendor":"${s.vendor.replace("\"", "")}","version":${s.version},"resolution":${s.resolution},"max_range":${s.maximumRange},"min_delay_us":${s.minDelay},"fifo_max":${s.fifoMaxEventCount},"power_ma":${s.power}}"""
+        }
+        client.sendJson("""{"type":"imu_info","model":"${Build.MANUFACTURER} ${Build.MODEL}","sensors":[$info]}""")
     }
 
     fun stop() {
@@ -324,6 +330,23 @@ class VideoStreamer(
         return rawNs + off
     }
 
+    /** Whatever calibration data the phone itself reports (many budget phones report none: values are null). */
+    private fun cameraCharsJson(): String {
+        fun arr(a: FloatArray?) = a?.joinToString(",", "[", "]") ?: "null"
+        val poseT = chars.get(CameraCharacteristics.LENS_POSE_TRANSLATION)
+        val poseR = chars.get(CameraCharacteristics.LENS_POSE_ROTATION)
+        val intr = chars.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+        val dist = if (Build.VERSION.SDK_INT >= 28) chars.get(CameraCharacteristics.LENS_DISTORTION) else null
+        val ref = if (Build.VERSION.SDK_INT >= 28) chars.get(CameraCharacteristics.LENS_POSE_REFERENCE) else null
+        val focal = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        val phys = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        val pix = chars.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val act = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val minFocus = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+        val orient = chars.get(CameraCharacteristics.SENSOR_ORIENTATION)
+        return """{"type":"camera_chars","model":"${Build.MANUFACTURER} ${Build.MODEL}","sensor_orientation":${orient ?: "null"},"lens_pose_reference":${ref ?: "null"},"lens_pose_translation_m":${arr(poseT)},"lens_pose_rotation_quat":${arr(poseR)},"lens_intrinsic_calibration":${arr(intr)},"lens_distortion":${arr(dist)},"focal_lengths_mm":${arr(focal)},"sensor_physical_mm":${phys?.let { "[${it.width},${it.height}]" } ?: "null"},"pixel_array":${pix?.let { "[${it.width},${it.height}]" } ?: "null"},"active_array":${act?.let { "[${it.left},${it.top},${it.right},${it.bottom}]" } ?: "null"},"min_focus_diopters":${minFocus ?: "null"}}"""
+    }
+
     private fun tryStart() {
         if (attempt >= candidates.size) { onStatus("No working video configuration"); return }
         size = candidates[attempt]
@@ -421,8 +444,9 @@ class VideoStreamer(
                     } catch (e: Exception) { onStatus("Capture failed: ${e.message}"); return }
                     sizeText = "${size.width}x${size.height}"
                     client.sendJson(
-                        """{"type":"video_info","codec":"h264","encoder":"${encInfo.name}","width":${size.width},"height":${size.height},"fps":${Cfg.FPS},"bitrate":$bitrate,"fps_range":"$fpsRange","ts_source":"$tsSource"}"""
+                        """{"type":"video_info","codec":"h264","encoder":"${encInfo.name}","width":${size.width},"height":${size.height},"fps":${Cfg.FPS},"sensor_orientation":${chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90},"bitrate":$bitrate,"fps_range":"$fpsRange","ts_source":"$tsSource"}"""
                     )
+                    client.sendJson(cameraCharsJson())
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
                     onStatus("Session config failed at ${size.width}x${size.height}, trying smaller")
@@ -445,9 +469,15 @@ class VideoStreamer(
         val ois = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
         if (ois?.contains(CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF) == true)
             b.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+        // Fixed focus when the camera supports it (calibration is only valid at one focus setting).
         val af = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)
-        if (af?.contains(CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO) == true)
+        val minFocus = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+        if (Cfg.LOCK_FOCUS && minFocus > 0f && af?.contains(CameraMetadata.CONTROL_AF_MODE_OFF) == true) {
+            b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+            b.set(CaptureRequest.LENS_FOCUS_DISTANCE, minOf(Cfg.FOCUS_DIOPTERS, minFocus))
+        } else if (af?.contains(CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO) == true) {
             b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+        }
         return b
     }
 

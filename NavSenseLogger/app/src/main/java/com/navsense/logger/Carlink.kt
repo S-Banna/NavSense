@@ -17,8 +17,12 @@ import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.hoho.android.usbserial.util.SerialInputOutputManager
 
 /**
- * Phone -> Arduino bridge over USB-OTG. Accepts w/a/d (anything else = stop).
- * Laptop sends the current command as a heartbeat; if heartbeats stop, we send 's'.
+ * Phone <-> Arduino bridge over USB-OTG.
+ *  - Laptop -> Arduino: accepts w/a/d (anything else = stop). The laptop sends the current command as a
+ *    heartbeat; if heartbeats stop, we send 's'.
+ *  - Arduino -> laptop: complete lines are parsed. "ENC,<arduino_ms>,<left>,<right>" lines become encoder
+ *    samples stamped with the PHONE clock (elapsedRealtimeNanos, same clock as camera + IMU); every other
+ *    line is forwarded as a text reply.
  */
 class CarLink(private val ctx: Context) {
     companion object {
@@ -32,26 +36,26 @@ class CarLink(private val ctx: Context) {
     @Volatile var lastRx = '-'
     @Volatile var tx = 0L                 // commands written to the Arduino
     @Volatile var heard = 0L              // bytes received back from the Arduino
-    @Volatile var encLeft = 0L            // latest cumulative pulse counts reported by the Arduino
-    @Volatile var encRight = 0L
-    @Volatile var encLines = 0L           // valid ENC lines parsed so far
-    val summary: String get() =
-        "$state | cmds=$rx '$lastRx' | wrote=$tx | heard=${heard}B | " +
-                if (encLines == 0L) "enc=-" else "enc L=$encLeft R=$encRight"
-    var onReply: ((String) -> Unit)? = null
-    /** (arduino_ms, left_count, right_count, phone_rx_ns). Called on the serial IO thread. */
-    @Volatile var onEncoder: ((Long, Long, Long, Long) -> Unit)? = null
+    @Volatile var encL = 0L               // latest encoder counts (for the on-screen status)
+    @Volatile var encR = 0L
+    val summary: String get() = "$state | cmds=$rx '$lastRx' | wrote=$tx | heard=${heard}B | enc L=$encL R=$encR"
+
+    var onReply: ((String) -> Unit)? = null                       // one complete non-ENC text line
+    var onEncoder: ((Long, Long, Long, Long) -> Unit)? = null     // (phone t_ns, arduino ms, left, right)
 
     private val thread = HandlerThread("car").apply { start() }
     private val handler = Handler(thread.looper)      // all serial writes are serialized here
     private val um = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
     private var port: UsbSerialPort? = null
     private var io: SerialInputOutputManager? = null
-    private val rxBuf = StringBuilder()           // serial chunks arrive split/merged; reassemble into lines
     private var last = 's'
     private var lastWriteMs = 0L
     private var receiverRegistered = false
     @Volatile private var closing = false
+
+    // Only touched from the serial read thread.
+    private val rxBuf = StringBuilder()
+    private var lastReply = ""
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -97,10 +101,13 @@ class CarLink(private val ctx: Context) {
             // Some boards (CDC-ACM/native USB) won't talk until DTR is asserted; Uno-types reset here.
             try { p.setDTR(true); p.setRTS(true) } catch (_: Exception) {}
             port = p
-            rxBuf.setLength(0)
-            // Keep draining the Arduino's replies so its TX never backs up; forward them to the laptop.
+            // Keep draining the Arduino's output so its TX never backs up; parse it line by line.
             io = SerialInputOutputManager(p, object : SerialInputOutputManager.Listener {
-                override fun onNewData(data: ByteArray) { onSerialData(data) }
+                override fun onNewData(data: ByteArray) {
+                    val tNs = SystemClock.elapsedRealtimeNanos()   // phone-clock arrival time of this chunk
+                    heard += data.size
+                    handleSerialBytes(data, tNs)
+                }
                 override fun onRunError(e: Exception) { state = "serial error: ${e.message}" }
             }).also { it.start() }
             last = 's'
@@ -111,37 +118,38 @@ class CarLink(private val ctx: Context) {
         }
     }
 
-    /** Runs on the SerialInputOutputManager thread (the only toucher of rxBuf while the port is open). */
-    private fun onSerialData(data: ByteArray) {
-        val rxNs = SystemClock.elapsedRealtimeNanos()   // same clock as IMU/video stamps
-        heard += data.size
-        rxBuf.append(String(data, Charsets.US_ASCII))
-        while (true) {
-            val nl = rxBuf.indexOf("\n")
-            if (nl < 0) break
+    /** Reassemble serial chunks into complete lines (chunks can split a line anywhere). */
+    private fun handleSerialBytes(data: ByteArray, tNs: Long) {
+        rxBuf.append(String(data, Charsets.ISO_8859_1))
+        var nl = rxBuf.indexOf("\n")
+        while (nl >= 0) {
             val line = rxBuf.substring(0, nl).trim()
             rxBuf.delete(0, nl + 1)
-            if (line.isNotEmpty()) onSerialLine(line, rxNs)
+            if (line.isNotEmpty()) handleLine(line, tNs)
+            nl = rxBuf.indexOf("\n")
         }
-        if (rxBuf.length > 512) rxBuf.setLength(0)      // no newline in ages = garbage; don't grow forever
+        if (rxBuf.length > 512) rxBuf.setLength(0)   // garbage with no newline: don't grow forever
     }
 
-    private fun onSerialLine(line: String, rxNs: Long) {
+    private fun handleLine(line: String, tNs: Long) {
         if (line.startsWith("ENC,")) {
-            // ENC,<arduino millis>,<left pulses>,<right pulses>  (10 Hz telemetry: never forwarded as car_reply)
-            val parts = line.split(',')
-            if (parts.size == 4) {
-                val ms = parts[1].toLongOrNull()
-                val l = parts[2].toLongOrNull()
-                val r = parts[3].toLongOrNull()
+            val f = line.split(',')
+            if (f.size == 4) {
+                val ms = f[1].toLongOrNull()
+                val l = f[2].toLongOrNull()
+                val r = f[3].toLongOrNull()
                 if (ms != null && l != null && r != null) {
-                    encLeft = l; encRight = r; encLines++
-                    onEncoder?.invoke(ms, l, r, rxNs)
+                    encL = l; encR = r
+                    onEncoder?.invoke(tNs, ms, l, r)
                 }
             }
-            return
+            return                                    // malformed ENC lines are dropped
         }
-        onReply?.invoke(line + "\n")                   // "Ready...", "Both sides: FORWARD", etc.
+        // Text replies: skip exact repeats (the 500 ms heartbeat makes the sketch re-print "FORWARD").
+        if (line != lastReply) {
+            lastReply = line
+            onReply?.invoke(line)
+        }
     }
 
     /** Safe to call from any thread. */
