@@ -1,6 +1,6 @@
 {
   "doctor_version": "0.1",
-  "time_utc": "2026-11-22T08:57:31Z",
+  "time_utc": "2026-11-22T14:20:25Z",
   "machine": {
     "hostname": "user",
     "os": "Windows-11-10.0.26300-SP0",
@@ -117,7 +117,7 @@
       "group": "DA3",
       "name": "probe time",
       "status": "ok",
-      "detail": "6 s",
+      "detail": "18 s",
       "fix": "",
       "gates": []
     },
