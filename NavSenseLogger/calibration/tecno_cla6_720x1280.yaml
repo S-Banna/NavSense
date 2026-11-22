@@ -1,0 +1,20 @@
+image_width: 720
+image_height: 1280
+camera_name: tecno_cla6_720x1280_portrait
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [1139.39, 0.0, 356.41, 0.0, 1127.84, 625.81, 0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.113168028, 0.146371408, 0.00399940152, -0.00210289154, -5.56445807]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [1139.39, 0.0, 356.41, 0.0, 0.0, 1127.84, 625.81, 0.0, 0.0, 0.0, 1.0, 0.0]

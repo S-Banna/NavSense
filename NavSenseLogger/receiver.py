@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NavSense receiver v0.3  (logging + keyboard drive control)
+NavSense receiver v0.4  (logging + keyboard drive control)
   pip install av opencv-python numpy      (av + cv2 optional: without them it just records)
 
 DRIVE:  w / a / d = go.   EVERY other key (space, s, Enter, Esc, anything) = STOP.
@@ -26,6 +26,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+import os, subprocess, sys
 
 try:
     import av
@@ -41,7 +42,7 @@ except ImportError:
     msvcrt = None
 
 SENSORS = ("accelerometer", "gyroscope", "magnetometer")
-
+RECEIVER_VERSION = "0.4"
 
 def recv_exact(sock, n):
     buf = bytearray(n)
@@ -93,6 +94,13 @@ def calibrate(conn, rounds=16):
 def med(d):
     return f"{sorted(d)[len(d) // 2]:5.1f}" if d else "  n/a"
 
+def regular_clock_looks_fake(period_ns, jitter_us):
+    """Near-zero jitter alone is NOT proof of a fake gyro: some sensor hubs stamp from a fixed hardware
+    clock (e.g. TECNO CLA6: 4.3575 ms, real data). A software timer sits on a round period (10.000 ms, 5.000 ms...)."""
+    if jitter_us >= 5:
+        return False
+    off = period_ns % 500_000                      # distance from a multiple of 0.5 ms
+    return min(off, 500_000 - off) < 20_000
 
 def r_body_cam(sensor_orientation, applied_cw):
     """Rotation of the (OpenCV-convention) camera frame of the SAVED image, expressed in the Android
@@ -206,6 +214,7 @@ def export_euroc(sdir, timeshift_ms=0.0, static_seconds=0.0, noise_scale=5.0):
         + ("" if 9.0 < gnorm < 10.6 else "   <-- units/scale look wrong"))
     # ---- is the gyro a real sensor? (some budget phones expose a fake/virtual one)
     jitter_us = float(np.std(np.diff(gt))) / 1e3
+    period_ns = float(np.median(np.diff(gt)))
     zero_axes = [k for k in range(3) if float(np.mean(mg[:, k] == 0.0)) > 0.9]
     ua = ma / np.maximum(np.linalg.norm(ma, axis=1, keepdims=True), 1e-9)
     k = max(1, int(round(0.1 / dt))) if (dt := float(np.median(dts))) > 0 else 1
@@ -215,8 +224,8 @@ def export_euroc(sdir, timeshift_ms=0.0, static_seconds=0.0, noise_scale=5.0):
         acc_rate_p90 = float(np.percentile(ang, 90))
         gyro_p99 = float(np.percentile(np.linalg.norm(mg, axis=1), 99))
     problems = []
-    if jitter_us < 5:
-        problems.append(f"gyro timestamps are perfectly regular (jitter {jitter_us:.1f} us): software-generated, "
+    if regular_clock_looks_fake(period_ns, jitter_us):
+        problems.append(f"gyro timestamps are at a round period (jitter {jitter_us:.1f} us): software-generated, "
                         "not real sensor sample times")
     if zero_axes:
         problems.append(f"gyro axes {zero_axes} read exactly 0 almost all the time")
@@ -375,6 +384,19 @@ class FrameWriter:
         for t in self.threads:
             t.join(timeout=120)
 
+def spawn_manifest(session_dir):
+    script = Path(__file__).with_name("generate_manifest.py")
+    try:
+        (Path(session_dir) / "logs").mkdir(exist_ok=True)
+        log = open(Path(session_dir) / "logs" / "generate_manifest.log", "a")
+        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0
+        subprocess.Popen([sys.executable, str(script), "--session", str(session_dir),
+                          "--recorder-version", RECEIVER_VERSION],
+                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         creationflags=flags, **({} if os.name == "nt" else {"start_new_session": True}))
+        log.close()
+    except Exception as e:
+        print(f"\nmanifest generation could not start: {e}  (run generate_manifest.py --session {session_dir})")
 
 class Session:
     def __init__(self, root, mono_off, decode, display, ctrl=None, frames_fmt="jpg", jpg_q=95,
@@ -550,10 +572,11 @@ class Session:
         if g > 150:
             ts = list(self.gyro_ts)
             d = [b - a_ for a_, b in zip(ts, ts[1:])]
+            period = statistics.median(d)
             jitter_us = statistics.pstdev(d) / 1e3
-            if jitter_us < 5:
-                probs.append(f"gyro timestamps are perfectly regular (jitter {jitter_us:.1f} us): "
-                             "software-generated, i.e. a FAKE gyro")
+            if regular_clock_looks_fake(period, jitter_us):
+                probs.append(f"gyro timestamps perfectly regular at a round {period / 1e6:.3f} ms period "
+                             f"(jitter {jitter_us:.1f} us): software-generated, i.e. a FAKE gyro")
             dead = [("x", "y", "z")[i] for i in range(3) if self.gyro_zero[i] / g > 0.9]
             if dead:
                 probs.append(f"gyro axes {dead} read exactly 0 almost always: fake or dead gyro")
@@ -615,6 +638,7 @@ class Session:
                 export_euroc(self.dir, **self.export_opts)
         except Exception as e:
             print(f"\nEuRoC export failed: {e}  (re-run with --export {self.dir})")
+        spawn_manifest(self.dir)
 
 
 def handle_client(conn, addr, args):
@@ -633,6 +657,8 @@ def handle_client(conn, addr, args):
                           export_opts=args.export_opts, writers=args.writers,
                           clock={"rtt_ms": rtt, "wall_offset_ms": wall_off, "mono_offset_ms": mono_off,
                                  "note": "offsets are phone minus laptop; all session timestamps are on the phone clock"})
+        hello["laptop_rx_ms"] = time.time() * 1e3
+        session.events.write(json.dumps(hello, separators=(",", ":")) + "\n")
         if av is None:
             print("(PyAV not installed: recording only, no decode/latency for display)")
         send_record(conn, {"type": "start"})   # phone begins camera + IMU only now
@@ -683,6 +709,7 @@ def main():
     args = ap.parse_args()
     if args.export:
         export_euroc(args.export, args.timeshift_ms, args.static_seconds, args.noise_scale)
+        spawn_manifest(args.export)
         return
     args.export_opts = None if args.no_export else dict(
         timeshift_ms=args.timeshift_ms, static_seconds=args.static_seconds, noise_scale=args.noise_scale)
