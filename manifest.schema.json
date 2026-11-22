@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "navsense-manifest-1.0",
+  "title": "NavSense session manifest",
+  "description": "Index of one session folder. See SESSION_CONTRACT.md. Keys starting with '_' are comments and are ignored by tools.",
+  "type": "object",
+  "required": ["contract_version", "session_id", "created_utc", "time_base", "streams", "stages"],
+  "properties": {
+    "contract_version": {"const": "1.0"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+    "label": {"type": "string"},
+    "created_utc": {"type": "string", "format": "date-time"},
+    "source": {
+      "type": "object",
+      "properties": {
+        "kind": {"enum": ["robot_phone_recording", "replay", "synthetic", "external_dataset"]},
+        "recorder": {"type": "object", "properties": {"name": {"type": "string"}, "version": {"type": "string"}}},
+        "phone": {"type": "object", "properties": {"manufacturer": {"type": "string"}, "model": {"type": "string"}, "android_sdk": {"type": "integer"}, "app_version": {"type": "string"}}},
+        "robot": {"type": "object", "properties": {"description": {"type": "string"}, "arduino_sketch": {"type": "string"}}}
+      }
+    },
+    "time_base": {
+      "type": "object",
+      "required": ["clock", "unit"],
+      "properties": {
+        "clock": {"const": "phone_elapsedRealtime"},
+        "unit": {"const": "ns"},
+        "t0_ns": {"type": "integer"},
+        "t_end_ns": {"type": "integer"},
+        "clock_sync_file": {"type": "string"}
+      }
+    },
+    "streams": {
+      "type": "object",
+      "properties": {
+        "rgb": {
+          "type": "object", "required": ["present"],
+          "properties": {
+            "present": {"type": "boolean"}, "path": {"type": "string"}, "format": {"enum": ["jpg", "png"]},
+            "count": {"type": "integer", "minimum": 0}, "width": {"type": "integer"}, "height": {"type": "integer"},
+            "sensor_orientation": {"type": "integer"}, "rotation_cw_deg": {"type": "integer"},
+            "fps_median": {"type": "number"}, "first_ts_ns": {"type": "integer"}, "last_ts_ns": {"type": "integer"},
+            "max_gap_ms": {"type": "number"}, "dropped_by_phone": {"type": "integer"}
+          }
+        },
+        "video_raw": {
+          "type": "object", "required": ["present"],
+          "properties": {"present": {"type": "boolean"}, "path": {"type": "string"}, "index": {"type": "string"}, "codec": {"type": "string"}}
+        },
+        "imu": {
+          "type": "object", "required": ["present"],
+          "properties": {
+            "present": {"type": "boolean"}, "raw_path": {"type": "string"}, "merged_path": {"type": "string"},
+            "accel_hz": {"type": "number"}, "gyro_hz": {"type": "number"}, "merged_hz": {"type": "number"},
+            "gyro_verdict": {"enum": ["ok", "fake", "missing", "unknown"]},
+            "units": {"const": "gyro rad/s, accel m/s^2 (with gravity), Android device frame"}
+          }
+        },
+        "encoders": {
+          "type": "object", "required": ["present"],
+          "properties": {
+            "present": {"type": "boolean"}, "path": {"type": "string"}, "count": {"type": "integer", "minimum": 0},
+            "rate_hz": {"type": "number"}, "left_pin": {"type": "string"}, "right_pin": {"type": "string"},
+            "edge": {"enum": ["rising", "falling", "both"]}, "directional": {"type": "boolean"}
+          }
+        },
+        "depth": {
+          "type": "object", "required": ["present"],
+          "properties": {"present": {"type": "boolean"}, "path": {"type": "string"}, "meta": {"type": "string"}, "count": {"type": "integer"}}
+        }
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "properties": {
+        "camera": {"$ref": "#/$defs/calib"},
+        "imu_camera": {"$ref": "#/$defs/calib"},
+        "wheel": {"$ref": "#/$defs/calib"}
+      }
+    },
+    "stages": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"$ref": "#/$defs/stage"}
+    },
+    "bundles": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["name", "includes"],
+        "properties": {
+          "name": {"type": "string"}, "created_utc": {"type": "string"}, "includes": {"type": "array", "items": {"type": "string"}},
+          "sha256_file": {"type": "string"}, "purpose": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "calib": {
+      "type": "object", "required": ["status"],
+      "properties": {
+        "status": {"enum": ["missing", "placeholder", "calibrated"]},
+        "path": {"type": "string"}, "source": {"type": "string"}, "notes": {"type": "string"}
+      }
+    },
+    "stage": {
+      "type": "object", "required": ["status"],
+      "properties": {
+        "status": {"enum": ["not_run", "queued", "running", "done", "failed", "skipped", "placeholder"]},
+        "machine": {"type": "object", "properties": {"hostname": {"type": "string"}, "os": {"type": "string"}}},
+        "started_utc": {"type": "string"}, "finished_utc": {"type": "string"},
+        "tool": {"type": "object", "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "commit": {"type": "string"}}},
+        "params": {"type": "object"},
+        "inputs": {"type": "array", "items": {"type": "string"}},
+        "outputs": {"type": "array", "items": {"type": "string"}},
+        "log": {"type": "string"},
+        "metrics": {"type": "object"},
+        "error": {"type": "string"},
+        "owner": {"type": "string"},
+        "todo": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
+      }
+    }
+  }
+}

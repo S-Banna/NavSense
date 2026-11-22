@@ -1,0 +1,5 @@
+{
+  "model": "depth-anything/DA3METRIC-LARGE",
+  "batch_size": 1,
+  "device": "auto"
+}

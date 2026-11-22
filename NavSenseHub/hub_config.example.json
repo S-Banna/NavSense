@@ -1,0 +1,44 @@
+{
+  "_comment": "Copy to hub_config.json (or run: python doctor.py --init-config). Keys starting with _ are ignored.",
+  "phone_port": 8765,
+
+  "da3": {
+    "enabled": true,
+    "path": "C:\\FYP\\Depth-Anything-3",
+    "python": "",
+    "conda_env": "",
+    "model": "",
+    "checkpoint_path": "",
+    "require_cuda": true,
+    "run_script": "",
+    "smoke_command": []
+  },
+
+  "ros2": {
+    "enabled": true,
+    "wsl_distro": "",
+    "setup": "/opt/ros/jazzy/setup.bash",
+    "workspace": "$HOME/navsense_ws",
+    "maps_dir": "$HOME/maps",
+    "check_nav2": true
+  },
+
+  "orbslam3": {
+    "_comment": "TODO: fill this on the ORB-SLAM3 machine, then set enabled=true. Example values are in the next line.",
+    "_example": {"required_paths": ["/home/USER/ORB_SLAM3/Examples/Monocular-Inertial/mono_inertial_euroc", "/home/USER/ORB_SLAM3/Vocabulary/ORBvoc.txt"], "smoke_command": ["/home/USER/ORB_SLAM3/Examples/Monocular-Inertial/mono_inertial_euroc"], "smoke_expect_rc": [0, 1]},
+    "enabled": false,
+    "required_paths": [],
+    "smoke_command": [],
+    "smoke_expect_rc": [0],
+    "notes": ""
+  },
+
+  "vlm": {
+    "_comment": "PLACEHOLDER: language grounding / VLM. Same shape as orbslam3.",
+    "enabled": false,
+    "required_paths": [],
+    "smoke_command": [],
+    "smoke_expect_rc": [0],
+    "notes": ""
+  }
+}

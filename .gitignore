@@ -11,3 +11,6 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+
+NavSenseHub/hub_config.json
+notes.txt

@@ -1,0 +1,118 @@
+{
+  "_comment": "ILLUSTRATIVE example with made-up numbers. A real manifest is generated per session. Fields marked TODO belong to the teammate / future work.",
+  "contract_version": "1.0",
+  "session_id": "20261115_153012",
+  "label": "corridor + room, forward-facing phone, manual teleop",
+  "created_utc": "2026-11-15T15:30:12Z",
+
+  "source": {
+    "kind": "robot_phone_recording",
+    "recorder": {"name": "navsense_receiver", "version": "0.4"},
+    "phone": {"manufacturer": "TECNO", "model": "CLA6", "android_sdk": 34, "app_version": "navsense-logger-2026-11"},
+    "robot": {"description": "L298N differential car, two single-channel wheel encoders", "arduino_sketch": "car_encoder.ino"}
+  },
+
+  "time_base": {
+    "clock": "phone_elapsedRealtime",
+    "unit": "ns",
+    "t0_ns": 4827398791137971,
+    "t_end_ns": 4827458791137971,
+    "clock_sync_file": "clock_sync.json"
+  },
+
+  "streams": {
+    "rgb": {
+      "present": true, "path": "mav0/cam0/data", "format": "jpg", "count": 1790,
+      "width": 720, "height": 1280, "sensor_orientation": 90, "rotation_cw_deg": 90,
+      "fps_median": 29.9, "first_ts_ns": 4827399100000000, "last_ts_ns": 4827458700000000,
+      "max_gap_ms": 71.0, "dropped_by_phone": 0
+    },
+    "video_raw": {"present": true, "path": "video.h264", "index": "video.jsonl", "codec": "h264"},
+    "imu": {
+      "present": true, "raw_path": "imu.jsonl", "merged_path": "mav0/imu0/data.csv",
+      "accel_hz": 248.0, "gyro_hz": 245.0, "merged_hz": 245.0, "gyro_verdict": "ok",
+      "units": "gyro rad/s, accel m/s^2 (with gravity), Android device frame"
+    },
+    "encoders": {
+      "present": true, "path": "encoder.csv", "count": 590, "rate_hz": 10.0,
+      "left_pin": "D12", "right_pin": "D2", "edge": "rising", "directional": false
+    },
+    "depth": {"present": true, "path": "depth", "meta": "depth/depth_meta.json", "count": 1790}
+  },
+
+  "calibration": {
+    "camera": {"status": "placeholder", "path": "calibration/camera_info.yaml", "source": "TODO checkerboard at 720x1280 portrait", "notes": "until calibrated, intrinsics come from the ORB-SLAM3 settings used for earlier runs"},
+    "imu_camera": {"status": "placeholder", "path": "calibration/extrinsics.json", "source": "derived from Android axes; translation unknown; time offset 0"},
+    "wheel": {"status": "missing", "notes": "TODO ticks per metre (left/right) and effective track width"}
+  },
+
+  "stages": {
+    "prepare": {
+      "status": "done",
+      "machine": {"hostname": "FYP-LAPTOP", "os": "Windows 11"},
+      "started_utc": "2026-11-15T15:32:00Z", "finished_utc": "2026-11-15T15:32:41Z",
+      "tool": {"name": "navsense_receiver export_euroc", "version": "0.4"},
+      "params": {"timeshift_ms": 0.0, "noise_scale": 5.0},
+      "outputs": ["mav0/cam0/data.csv", "mav0/imu0/data.csv", "timestamps.txt", "orbslam3_phone.yaml", "sync_report.txt"],
+      "log": "logs/prepare.log",
+      "metrics": {"largest_frame_gap_ms": 71, "imu_samples_between_frames_min": 6}
+    },
+
+    "depth_da3": {
+      "status": "done",
+      "machine": {"hostname": "FYP-LAPTOP", "os": "Windows 11"},
+      "started_utc": "2026-11-15T16:00:00Z", "finished_utc": "2026-11-15T16:41:10Z",
+      "tool": {"name": "Depth-Anything-3", "version": "TODO", "commit": "TODO"},
+      "params": {"model": "depth-anything/DA3METRIC-LARGE", "focal_px_used": 1041.2, "stride": 1},
+      "inputs": ["mav0/cam0/data", "calibration/camera_info.yaml"],
+      "outputs": ["depth/", "depth/depth_meta.json"],
+      "log": "logs/depth_da3.log"
+    },
+
+    "rtabmap_offline": {
+      "status": "done",
+      "machine": {"hostname": "FYP-LAPTOP (WSL2 Ubuntu 24.04)", "os": "ROS 2 Jazzy"},
+      "started_utc": "2026-11-15T17:00:00Z", "finished_utc": "2026-11-15T17:09:30Z",
+      "tool": {"name": "rtabmap_ros", "version": "TODO"},
+      "params": {"mode": "mapping", "odometry": "rgbd_odometry", "stride": 3, "scale": 0.5},
+      "inputs": ["mav0/cam0/data", "depth/"],
+      "outputs": ["slam/rtabmap/map.db", "slam/rtabmap/trajectory_tum.txt", "slam/rtabmap/trajectory_meta.json", "slam/rtabmap/grid.yaml", "slam/rtabmap/grid.pgm"],
+      "log": "logs/rtabmap_offline.log",
+      "metrics": {"loop_closures": 0, "odometry_lost_count": 0},
+      "notes": "illustrative values"
+    },
+
+    "orbslam3": {
+      "status": "placeholder",
+      "owner": "TODO teammate",
+      "todo": [
+        "document the machine (OS, ORB-SLAM3 version/commit, build notes)",
+        "state which mode is run (mono / mono-inertial / RGB-D) and the exact command line",
+        "map the settings yaml (intrinsics, IMU noise, Tbc) to the contract's calibration/ files",
+        "write the outputs under slam/orbslam3/ (trajectory_tum.txt + trajectory_meta.json at minimum)",
+        "fill the 'orbslam3' block of hub_config.json so doctor.py can verify the install"
+      ],
+      "inputs": ["mav0/cam0/data", "mav0/cam0/data.csv", "mav0/imu0/data.csv", "timestamps.txt", "orbslam3_phone.yaml"]
+    },
+
+    "eval": {"status": "not_run", "notes": "future: compare trajectories with evo, produce plots + metrics.json"},
+    "live_ingest": {"status": "not_run"},
+    "rtabmap_live": {"status": "not_run"},
+    "nav2": {"status": "not_run"},
+
+    "vlm": {
+      "status": "placeholder",
+      "owner": "TODO",
+      "todo": ["choose the model and how it runs (local vs API)", "define input (images/map + text query) and output (goal pose in map frame + confidence)", "decide where results live (proposal: semantic/landmarks.json)"]
+    }
+  },
+
+  "bundles": [
+    {
+      "name": "slam_bundle",
+      "purpose": "minimum needed on a machine that only runs ORB-SLAM3",
+      "includes": ["manifest.json", "mav0/", "timestamps.txt", "orbslam3_phone.yaml", "calibration/", "sync_report.txt"],
+      "sha256_file": "slam_bundle.sha256"
+    }
+  ]
+}
