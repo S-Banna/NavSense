@@ -479,7 +479,7 @@ function render(){
   const warn=[];for(const [k,v] of Object.entries(c)){if(v&&typeof v==='object'&&v.exists===false)warn.push(`${k}: not found (${v.path})`);}
   $('#cfgwarn').innerHTML=warn.length?chip('bad','config problem')+' '+esc(warn.join(' | ')):'';
   const d=state.doctor,st=$('#stages');st.innerHTML='';
-  const names=['prepare','depth_da3','rtabmap_offline','orbslam3'];
+  const names=['prepare','depth_da3','rtabmap_offline','orbslam3','vlm'];
   for(const n of names){
     const s=(d&&d.stages||{})[n];
     let h;
