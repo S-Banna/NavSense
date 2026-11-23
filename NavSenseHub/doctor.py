@@ -16,9 +16,6 @@ Where to run it
 
 Every check is one of: ok / warn / fail / todo / skip. A STAGE is READY when none of the checks that gate it is
 fail / todo / skip. (warn never blocks.) Exit code: 0 = no FAIL anywhere, 1 = at least one FAIL, 2 = doctor crashed.
-
-Extending it: placeholders for ORB-SLAM3 and the VLM are driven by hub_config.json (required_paths, smoke_command).
-Search this file for "PLACEHOLDER" to see where a teammate can add real logic.
 """
 from __future__ import annotations
 
@@ -56,34 +53,33 @@ DEFAULT_CONFIG = {
     "da3": {
         "enabled": True,
         "path": r"C:\FYP\Depth-Anything-3",
-        "python": "",            # full path to the python.exe of the env where DA3 is installed ("" = auto-detect)
-        "conda_env": "",         # alternative: name of a conda env containing DA3
-        "model": "",             # e.g. "depth-anything/DA3METRIC-LARGE" (checks the Hugging Face cache for it)
-        "checkpoint_path": "",   # optional local weights folder/file
+        "python": "",            
+        "conda_env": "",         
+        "model": "",             
+        "checkpoint_path": "",   
         "require_cuda": True,
-        "run_script": "",        # script the hub's "run DA3" button will call (absolute, or relative to da3.path)
-        "smoke_command": [],     # optional command run with --smoke, e.g. your run script on 2 frames
+        "run_script": "",        
+        "smoke_command": [],     
     },
     "ros2": {
         "enabled": True,
-        "wsl_distro": "",        # "" = default WSL distro (only used when running on Windows)
+        "wsl_distro": "",        
         "setup": "/opt/ros/jazzy/setup.bash",
         "workspace": "$HOME/navsense_ws",
         "maps_dir": "$HOME/maps",
         "check_nav2": True,
     },
-    # ===== PLACEHOLDER (teammate): ORB-SLAM3 =====
     "orbslam3": {
-        "enabled": False,        # set true once the fields below are filled in on the ORB-SLAM3 machine
-        "required_paths": [],    # e.g. the mono_inertial_euroc binary, ORBvoc.txt, your settings yaml
-        "smoke_command": [],     # e.g. ["/path/to/mono_inertial_euroc"] (just needs to start and exit as expected)
+        "enabled": False,        
+        "required_paths": [],    
+        "smoke_command": [],     
         "smoke_expect_rc": [0],
         "notes": "",
     },
-    # ===== PLACEHOLDER: VLM / language grounding =====
     "vlm": {
-        "enabled": False,
-        "required_paths": [],
+        "enabled": True,
+        "python": "",            # Full path to python.exe with open_clip. "" = sys.executable
+        "script_path": "",       # Path to vlm_openclip.py. "" = look next to doctor.py
         "smoke_command": [],
         "smoke_expect_rc": [0],
         "notes": "",
@@ -215,14 +211,11 @@ for mode in ("installed", "source"):
             if os.path.isdir(src):
                 sys.path.insert(0, src)
 
-        # Clear cached package modules before retrying from source.
         for name in list(sys.modules):
             if name == "depth_anything_3" or name.startswith("depth_anything_3."):
                 sys.modules.pop(name, None)
 
         importlib.invalidate_caches()
-
-        # Namespace packages are valid; test the actual API module instead.
         api = importlib.import_module("depth_anything_3.api")
 
         if not hasattr(api, "DepthAnything3"):
@@ -485,7 +478,6 @@ def check_ros2(cfg, rep):
         missn = [p for p in ROS_PKGS_NAV2 if not f.get(f"pkg:{p}")]
         rep.add(G, "Nav2 packages", FAIL if missn else OK, ("missing: " + ", ".join(missn)) if missn else "present",
                 fix="sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup" if missn else "", gates=["nav2"])
-    # live-ingest networking
     port = f.get("port", "")
     rep.add(G, f"TCP port {cfg['phone_port']}", OK if port == "free" else FAIL, "free" if port == "free" else port[-120:],
             fix="" if port == "free" else "something already listens on it (the Windows receiver? a previous bridge?)", gates=["live_ingest"])
@@ -520,8 +512,6 @@ def check_windows_wsl_network(cfg, rep, G):
 
 # ----------------------------------------------------------------------------------------------- placeholders
 def check_external_tool(key, label, cfg, rep, smoke, stage):
-    """PLACEHOLDER mechanism shared by ORB-SLAM3 and the VLM. Driven entirely by hub_config.json:
-    required_paths (must exist) + smoke_command (must exit with one of smoke_expect_rc when --smoke is given)."""
     c = cfg[key]
     rep.cover(stage)
     if not c.get("enabled"):
@@ -606,8 +596,50 @@ def check_orbslam3(cfg, rep, smoke):
 
 
 def check_vlm(cfg, rep, smoke):
-    # ===== PLACEHOLDER: VLM / language grounding =====
-    check_external_tool("vlm", "VLM", cfg, rep, smoke, "vlm")
+    c = cfg["vlm"]
+    G, gate = "VLM", ["vlm"]
+    rep.cover("vlm")
+    
+    if not c.get("enabled"):
+        rep.add(G, "VLM", SKIP, "disabled in hub_config.json on this machine", gates=gate)
+        return
+
+    # 1. Check the python interpreter
+    cmd = [c["python"]] if c.get("python") else [sys.executable]
+    py_name = c.get("python") or "current interpreter"
+    
+    # 2. Probe for the exact modules your script needs
+    probe_code = "import torch; import open_clip; import cv2; import PIL; import numpy; print('ok')"
+    rc, out, err = run(cmd + ["-c", probe_code], 120)   # 120s: import torch on Windows can be slow
+    if rc == 0:
+        rep.add(G, "Python dependencies", OK, f"open_clip, torch, cv2 found in {py_name}")
+    else:
+        # show the actual reason so it's diagnosable from the hub log alone
+        reason = (err or out or "no output").strip().splitlines()
+        reason = reason[-1] if reason else f"probe exited with rc {rc}"
+        rep.add(G, "Python dependencies", FAIL,
+                f"probe failed in {py_name} (rc {rc}): {reason}",
+                fix="pip install open_clip_torch torch opencv-python (and check the error above)",
+                gates=gate)
+
+    # 3. Check for the script
+    sp = c.get("script_path") or os.path.join(os.path.dirname(__file__), "vlm_openclip.py")
+    if os.path.isfile(sp):
+        rep.add(G, "VLM script", OK, os.path.basename(sp))
+    else:
+        rep.add(G, "VLM script", FAIL, f"not found at {sp}", fix="Create vlm_openclip.py or set vlm.script_path", gates=gate)
+
+    # 4. Smoke test if requested
+    sc = c.get("smoke_command") or []
+    if sc and smoke:
+        rc, out, err = run(sc, 300)
+        good = rc in c.get("smoke_expect_rc", [0])
+        rep.add(G, "smoke command", OK if good else FAIL, f"rc {rc}: {(err or out)[-200:]}", gates=[] if good else [gate])
+    elif sc:
+        rep.add(G, "smoke command", SKIP, "configured; run with --smoke")
+
+    if not rep_has_gate(rep, G, "vlm"):
+        rep.add(G, "VLM", OK, "ready")
 
 
 def check_local_python(rep):

@@ -37,9 +37,10 @@
   },
 
   "vlm": {
-    "_comment": "PLACEHOLDER: language grounding / VLM. Same shape as orbslam3.",
-    "enabled": false,
-    "required_paths": [],
+    "_comment": "VLM (OpenCLIP). Leave python/script_path empty to auto-detect from the environment running doctor.py / the hub.",
+    "enabled": true,
+    "python": "",
+    "script_path": "",
     "smoke_command": [],
     "smoke_expect_rc": [0],
     "notes": ""
