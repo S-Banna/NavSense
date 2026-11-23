@@ -11,6 +11,7 @@ script as a subprocess, shows its output live, and re-reads manifest.json to sho
   step 1  Manifest      generate_manifest.py --session <s>
   step 2  Calibration   install_calibration.py <s>          (runs step 1 first if there is no manifest)
   step 3  Depth (DA3)   da3_session_runner.py --session <s> [--dry-run]    (uses the DA3 env's python from hub_config.json)
+  VLM     OpenCLIP      vlm_openclip.py --session <s>                      (uses the VLM env's python from hub_config.json)
   --      Doctor        doctor.py --out capabilities.json   (what can this machine run?)
   --      ORB-SLAM3     PLACEHOLDER (teammate). See build_orbslam3_steps() below.
 
@@ -21,6 +22,7 @@ Paths (all overridable in hub_config.json under "hub": sessions_dir, generate_ma
   sessions   <repo>/NavSenseLogger/sessions
   scripts    searched in NavSenseHub/, NavSenseLogger/, the repo root, and the current directory
   DA3        da3.run_script and da3.python from hub_config.json
+  VLM        vlm.run_script and vlm.python from hub_config.json
 """
 from __future__ import annotations
 
@@ -67,6 +69,7 @@ class Config:
         raw = raw if isinstance(raw, dict) else {}
         hub = raw.get("hub", {}) if isinstance(raw.get("hub"), dict) else {}
         da3 = raw.get("da3", {}) if isinstance(raw.get("da3"), dict) else {}
+        vlm = raw.get("vlm", {}) if isinstance(raw.get("vlm"), dict) else {}
         self.port = int(hub.get("port", 8770))
         sess = sessions_override or hub.get("sessions_dir") or str(REPO / "NavSenseLogger" / "sessions")
         if not Path(sess).is_dir() and (Path.cwd() / "sessions").is_dir():
@@ -77,6 +80,8 @@ class Config:
         self.doctor = find_script("doctor.py", hub.get("doctor"))
         self.da3_script = find_script("da3_session_runner.py", da3.get("run_script") or None)
         self.da3_python = da3.get("python") or sys.executable
+        self.vlm_script = find_script("vlm_openclip.py", vlm.get("run_script") or None)
+        self.vlm_python = vlm.get("python") or sys.executable
         self.caps = HERE / "capabilities.json"
 
     def describe(self):
@@ -90,6 +95,8 @@ class Config:
             "doctor": item(self.doctor),
             "da3_script": item(self.da3_script),
             "da3_python": item(self.da3_python) if self.da3_python != sys.executable else {"path": self.da3_python, "exists": True},
+            "vlm_script": item(self.vlm_script),
+            "vlm_python": item(self.vlm_python) if self.vlm_python != sys.executable else {"path": self.vlm_python, "exists": True},
         }
 
 
@@ -117,6 +124,7 @@ def session_info(sdir: Path) -> dict:
     stages = (m or {}).get("stages") or {}
     cam = ((m or {}).get("calibration") or {}).get("camera") or {}
     da3 = stages.get("depth_da3") or {}
+    vlm = stages.get("vlm") or {}
     src = str(meta.get("intrinsics_source", ""))
     cal_status = cam.get("status")
     return {
@@ -131,12 +139,12 @@ def session_info(sdir: Path) -> dict:
         "depth_count": depth,
         "depth_focal": meta.get("focal_px_used"),
         "depth_source": src,
-        # depth was made from the guessed intrinsics, but a real calibration is installed now
         "depth_stale": bool(depth > 0 and cal_file and cal_status == "calibrated" and src.startswith("orbslam3_phone.yaml")),
         "prepare": (stages.get("prepare") or {}).get("status"),
         "da3_status": da3.get("status"),
         "da3_error": da3.get("error"),
         "orbslam3_status": (stages.get("orbslam3") or {}).get("status"),
+        "vlm_status": vlm.get("status"),
     }
 
 
@@ -317,6 +325,12 @@ def start_action(cfg: Config, jobs: Jobs, action: str, sid: str | None):
         cmd = [cfg.da3_python, str(cfg.da3_script), "--session", str(s)] + (["--dry-run"] if action == "da3_dry" else [])
         jobs.start(f"DA3{' dry run' if action == 'da3_dry' else ''}: {s.name}", action, s,
                    [("3. Depth (DA3)", cmd, cfg.da3_script.parent)])
+    elif action == "vlm":
+        if not cfg.vlm_script.is_file():
+            raise ValueError(f"VLM runner not found at {cfg.vlm_script} (set vlm.run_script in hub_config.json)")
+        cmd = [cfg.vlm_python, str(cfg.vlm_script), "--session", str(s)]
+        jobs.start(f"VLM: {s.name}", action, s,
+                   [("VLM (OpenCLIP)", cmd, cfg.vlm_script.parent)])
     elif action == "orbslam3":
         if not ORBSLAM3_IMPLEMENTED:
             raise NotImplementedError("ORB-SLAM3 is a placeholder for the teammate (see build_orbslam3_steps in navsense_hub.py)")
@@ -428,7 +442,7 @@ pre{margin:0;background:#0b0e12;color:#d7dde4;padding:10px;border-radius:6px;max
 <main>
 <div class="card"><h2>This machine (doctor)</h2><div id="stages" class="stages"></div><div id="cfgwarn" class="small" style="margin-top:8px"></div></div>
 <div class="card"><h2>Sessions <span class="mut small" id="sessDir"></span></h2>
-<table><thead><tr><th>Session</th><th>Recorded</th><th>1 &middot; Manifest</th><th>2 &middot; Calibration</th><th>3 &middot; Depth (DA3)</th><th>ORB-SLAM3</th></tr></thead><tbody id="rows"></tbody></table>
+<table><thead><tr><th>Session</th><th>Recorded</th><th>1 &middot; Manifest</th><th>2 &middot; Calibration</th><th>3 &middot; Depth (DA3)</th><th>ORB-SLAM3</th><th>VLM (OpenCLIP)</th></tr></thead><tbody id="rows"></tbody></table>
 <div id="empty" class="mut" hidden>No session folders found.</div></div>
 <div class="card"><h2>Job output <span id="jobTitle" class="mut"></span> <button id="cancelBtn" hidden>Cancel</button></h2>
 <div class="bar"><div id="prog"></div></div><pre id="log">Nothing run yet.</pre></div>
@@ -438,7 +452,7 @@ What to do: read <code>SESSION_CONTRACT.md</code> section 8 and the <code>orbsla
 write the stage script (<code>--session &lt;folder&gt; [--dry-run]</code>, results in <code>slam/orbslam3/</code>); then implement
 <code>build_orbslam3_steps()</code> in <code>navsense_hub.py</code>, set <code>ORBSLAM3_IMPLEMENTED = True</code>, and fill the <code>orbslam3</code> block in <code>hub_config.json</code>.
 Machine-side inputs already exist per session: <code>mav0/</code>, <code>timestamps.txt</code>, <code>orbslam3_phone.yaml</code> (its intrinsics are still a guess; the real ones are in <code>calibration/camera_info.yaml</code>).</div></div>
-<div class="small mut">Not wired into the hub yet: RTAB-Map (WSL2), live ingest, Nav2, VLM. Use the commands in PROJECT_SUMMARY.md for those.</div>
+<div class="small mut">Not wired into the hub yet: RTAB-Map (WSL2), live ingest, Nav2. Use the commands in PROJECT_SUMMARY.md for those.</div>
 </main>
 <script>
 const $=s=>document.querySelector(s);
@@ -454,10 +468,11 @@ function render(){
   const warn=[];for(const [k,v] of Object.entries(c)){if(v&&typeof v==='object'&&v.exists===false)warn.push(`${k}: not found (${v.path})`);}
   $('#cfgwarn').innerHTML=warn.length?chip('bad','config problem')+' '+esc(warn.join(' | ')):'';
   const d=state.doctor,st=$('#stages');st.innerHTML='';
-  const names=['prepare','depth_da3','rtabmap_offline','orbslam3'];
+  const names=['prepare','depth_da3','rtabmap_offline','orbslam3','vlm'];
   if(!d){st.innerHTML='<span class="mut">Doctor has not been run yet. Click "Run doctor".</span>';}
   else for(const n of names){const s=(d.stages||{})[n];let h;
     if(n==='orbslam3')h=chip('warn','orbslam3: placeholder (teammate)',(s&&s.blocked_by||[]).join('\n'));
+    else if(n==='vlm')h=chip(s&&s.ready?'ok':'bad','vlm'+(s&&s.ready?': ready':': not ready'),(s&&s.blocked_by||[]).join('\n'));
     else if(!s||s.ready===null)h=chip('mute',n+': not checked');
     else h=chip(s.ready?'ok':'bad',n+(s.ready?': ready':': not ready'),(s.blocked_by||[]).join('\n'));
     st.insertAdjacentHTML('beforeend',h);}
@@ -482,13 +497,23 @@ function render(){
     const gyro=s.gyro_verdict?chip(s.gyro_verdict==='ok'?'ok':'bad','gyro '+s.gyro_verdict):'';
     const dwhy=!s.has_manifest?'Generate the manifest first':(!hasF?'no frames':(!da3ok?'DA3 runner not found':''));
     const orb=state.orbslam3_implemented?btn('Run','orbslam3',s.id,{dis:!s.has_manifest}):btn('Run','orbslam3',s.id,{dis:true,why:'Placeholder: left for the teammate'});
+    
+    let vlm;
+    if(s.vlm_status==='running') vlm=chip('warn','running...');
+    else if(s.vlm_status==='done') vlm=chip('ok','completed');
+    else if(s.vlm_status==='failed') vlm=chip('bad','last run failed');
+    else vlm=chip('mute','not run');
+    const vlmWhy=!s.has_manifest?'Generate the manifest first':(!hasF?'no frames':'');
+    const vlmBtn = btn('Run VLM', 'vlm', s.id, {dis:!!vlmWhy, why:vlmWhy});
+
     rows.insertAdjacentHTML('beforeend',`<tr>
       <td><span class="sid">${esc(s.id)}</span><div class="mut small">${esc(s.label)}</div><div class="row">${btn('Open folder','open_folder',s.id)}</div></td>
       <td>${s.frames} frames<div style="margin-top:4px">${gyro}</div></td>
       <td>${manifest}<div class="row">${btn(s.has_manifest?'Regenerate':'Generate','manifest',s.id,{primary:!s.has_manifest})}</div></td>
       <td>${cal}<div class="row">${btn('Install calibration','calibration',s.id,{dis:!hasF,why:hasF?'':'no frames'})}</div></td>
       <td>${dep}<div class="row">${btn('Dry run','da3_dry',s.id,{dis:!!dwhy,why:dwhy})}${btn(s.depth_count?'Rerun DA3':'Run DA3','da3',s.id,{dis:!!dwhy,why:dwhy,primary:s.has_manifest&&s.depth_count===0})}${s.depth_count?btn('Open depth','open_depth',s.id):''}</div></td>
-      <td>${chip('warn','placeholder')}<div class="row">${orb}</div></td></tr>`);}
+      <td>${chip('warn','placeholder')}<div class="row">${orb}</div></td>
+      <td>${vlm}<div class="row">${vlmBtn}</div></td></tr>`);}
 }
 function state_job_running(s){return busy&&window._jobSession===s.id;}
 async function refresh(){state=await api('/api/state');render();}
@@ -500,6 +525,9 @@ document.addEventListener('click',async e=>{
     if(d&&d.ready===false&&!confirm('Doctor says DA3 is not ready on this machine:\n'+d.blocked_by.join('\n')+'\n\nRun anyway?'))return;
     if(!(s.cal_file&&s.cal_status==='calibrated')&&!confirm('This session has no installed calibration: DA3 will use the GUESSED focal length from orbslam3_phone.yaml, so metric depth will be wrong.\n\nRun anyway?'))return;
     if(s.depth_count>0&&!confirm('Depth already exists and will be overwritten. Continue?'))return;}
+  if(a==='vlm'&&s){
+    const d=state.doctor&&state.doctor.stages&&state.doctor.stages.vlm;
+    if(d&&d.ready===false&&!confirm('Doctor says VLM is not ready on this machine:\n'+d.blocked_by.join('\n')+'\n\nRun anyway?'))return;}
   const r=await api('/api/run',{action:a,session:sid});
   if(r.error)alert(r.error);else{jobNext=0;$('#log').textContent='';window._jobSession=sid;}
   pollJob();});
