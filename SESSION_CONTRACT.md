@@ -240,12 +240,31 @@ The contract already provides what ORB-SLAM3's EuRoC-style examples expect (`mav
 - [ ] Viewer: how to start/save/stop it for the demo wrapper.
 - [ ] Known problems (for example map resets in visual-inertial mode and what was learned about them).
 
-## 9. PLACEHOLDER: VLM / language grounding
+## 9. VLM / language grounding
 
-Not designed yet. Proposal to react to: input = map (`map.db` / `grid`) or recorded frames + a text query
-("go to the laboratory"); output = a goal pose in the `map` frame + confidence, stored in
-`semantic/landmarks.json` as a list of `{name, pose_map, source_frames, confidence}`; manifest stage `vlm`.
-Open: model choice, local vs API, how landmarks are created from images, how queries reach Nav2.
+**Inputs:**
+- `mav0/cam0/data/` — RGB frames (every Nth used; default N=10)
+- `semantic/frame_embeddings.npz` — pre-computed per-frame embeddings (OpenCLIP or DINOv2)
+- A text query string (passed at runtime, not stored in the session)
+
+**Outputs** (written to `semantic/`):
+
+| file | content |
+|------|---------|
+| `landmarks.json` | `[{name, pose_map, source_frames, confidence}]` — named places and their map-frame poses |
+| `query_result.json` | result of the latest query: matched frame, pose, confidence, top-k alternatives |
+| `frame_embeddings.npz` | cached embeddings (keyed by frame timestamp ns) |
+
+**Manifest stage:** `vlm`  
+**Stage inputs:** `streams.rgb.present = true`, `semantic/frame_embeddings.npz`  
+**Stage outputs:** updates `semantic/landmarks.json`, `semantic/query_result.json`
+
+**Interface contract:** the stage accepts `--session <folder> --query "text"` and exits 0 with
+`query_result.json` written, or non-zero on failure. Pose format: same as trajectory entries
+(`tx ty tz qx qy qz qw` in the map frame). Confidence is a float in [0, 1].
+
+Open: whether DINOv2 (re-localisation) and OpenCLIP (semantic retrieval) share one stage or split
+into `vlm_index` and `vlm_query`; how the goal pose reaches Nav2 (action client vs topic).
 
 ---------------------------------------------------------------------------------------------------------------------
 
