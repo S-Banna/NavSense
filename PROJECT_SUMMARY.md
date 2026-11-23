@@ -195,10 +195,21 @@ resets whose cause was not established. **Later to complete**, using section 8 o
 - how outputs map to `slam/orbslam3/trajectory_tum.txt` and `trajectory_meta.json`;
 - viewer start/save/stop procedure; known issues; the `orbslam3` block of `hub_config.json`.
 
-## 11. VLM / language grounding - PLACEHOLDER
+## 11. VLM / language grounding
 
-Intended: text query ("go to the laboratory") -> goal pose in the map frame -> Nav2. Nothing decided: model, local vs
-API, how landmarks are created from images, where results are stored (proposal in the contract: `semantic/`).
+Two approaches explored, both using recorded RGB frames as the retrieval corpus:
+
+**Semantic place retrieval (OpenCLIP):** Every 10th frame is embedded with OpenCLIP. A text query
+("go to the kitchen") is embedded in the same space; cosine search finds the best-matching frame.
+The pose stored for that frame becomes the Nav2 goal.
+
+**Visual re-localisation (DINOv2):** Starting from an unknown position, the current live camera view
+is matched against the stored frame embeddings using DINOv2 features. The best match yields an
+estimated current pose — a form of appearance-based dead-reckoning localisation.
+
+Both paths converge on the same output: a pose in the map frame retrieved from a matched frame.
+Open: integrating the goal pose into Nav2, handling query ambiguity (multiple plausible matches),
+and deciding whether embeddings are pre-computed offline or on-demand.
 
 ---------------------------------------------------------------------------------------------------------------------
 
