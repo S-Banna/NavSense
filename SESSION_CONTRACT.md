@@ -227,18 +227,113 @@ stage can run. `todo` and `skip` on a stage's gating checks mean "not available 
 
 ---------------------------------------------------------------------------------------------------------------------
 
-## 8. PLACEHOLDER: ORB-SLAM3
 
-The contract already provides what ORB-SLAM3's EuRoC-style examples expect (`mav0/cam0/data/<ts>.<ext>`,
-`mav0/imu0/data.csv`, `timestamps.txt`, a settings template). Please complete:
+## 8. ORB-SLAM3 Integration
 
-- [ ] Machine: OS, how it is built, ORB-SLAM3 version/commit, ROS wrapper if any, `doctor.py` block filled.
-- [ ] Modes that work: monocular / monocular-inertial / RGB-D, each with the exact command line.
-- [ ] Settings: where the real yaml lives, camera intrinsics source, IMU noise values, `Tbc` and its source.
-- [ ] Known loader details (for example: the stock EuRoC loader hard-codes `.png`; ours are `.jpg` by default).
-- [ ] Output mapping: how its trajectory becomes `slam/orbslam3/trajectory_tum.txt` (+ meta with `frame` and `scale`).
-- [ ] Viewer: how to start/save/stop it for the demo wrapper.
-- [ ] Known problems (for example map resets in visual-inertial mode and what was learned about them).
+ORB-SLAM3 is integrated into NavSenseHub for offline RGB-D mapping using recorded phone RGB images and DA3-generated depth maps.
+
+### Machine and Build
+
+- **OS:** EndeavourOS Linux (Arch-based).
+- **ORB-SLAM3:** Built locally from source at `~/opt/orbslam-deps/ORB_SLAM3`.
+- **Version/commit:** Not recorded.
+- **Build:** CMake with OpenCV, Eigen3, Pangolin, Boost Serialization, and required shared libraries.
+- **ROS wrapper:** None. ORB-SLAM3 runs directly as a C++ executable.
+- **Executable:** `orbslam/build/test_sample1_rgbd`.
+- **Doctor:** Implemented in `NavSenseHub/doctor.py`. Checks the runner, executable, settings YAML, ORB vocabulary, and shared libraries. Reports `orbslam3: ready` when requirements are satisfied.
+
+### Supported Modes
+
+| Mode | Status |
+|---|---|
+| Monocular | Not integrated |
+| Monocular-inertial | Not integrated |
+| RGB-D | Implemented and tested |
+
+RGB-D mapping can be launched directly:
+
+```bash
+./orbslam/build/test_sample1_rgbd \
+    "./NavSenseLogger/sessions/20261119_115854"
+```
+
+Or through the Python session runner:
+
+```bash
+python NavSenseHub/run_orbslam3.py \
+    --session "./NavSenseLogger/sessions/20261119_115854"
+```
+
+The session can also be selected through the **ORB-SLAM3 Run** button in NavSenseHub.
+
+### Settings and Calibration
+
+- **Settings file:** `orbslam/orbslam3_tecno.yaml`.
+- **Camera:** Tecno CLA6, recording at 720 × 1280.
+- **Intrinsics source:** Phone camera calibration stored in `NavSenseLogger/calibration/tecno_cla6_720x1280.yaml`.
+- **Depth:** 16-bit PNG depth maps in millimetres, generated using Depth Anything 3.
+- **Depth factor:** `RGBD.DepthMapFactor: 1000.0`.
+- **IMU noise and Tbc:** Placeholder values in the settings file. Not used by the current RGB-D pipeline.
+
+### Input Loading
+
+The executable accepts a NavSense session directory directly, without an interactive dataset selection menu.
+
+Inputs:
+
+- RGB images: `mav0/cam0/data/<timestamp>.jpg`
+- Depth images: `depth/<timestamp>.png`
+- Session manifest: `manifest.json`
+
+The loader supports the session's JPEG RGB images and corresponding PNG depth maps. Frame timestamps are obtained from the recorded image filenames rather than generated from the frame index.
+
+### Outputs
+
+Results are saved separately for each session under:
+
+```text
+<session>/slam/orbslam3/
+├── atlas.osa
+├── trajectory_tum.txt
+├── keyframe_trajectory_tum.txt
+├── trajectory_meta.json
+└── orbslam3_run.yaml
+```
+
+The trajectory is exported in TUM format:
+
+`timestamp tx ty tz qx qy qz qw`
+
+The metadata specifies:
+
+- `frame`: `camera`
+- `method`: `ORB-SLAM3 RGB-D`
+- `mode`: `mapping`
+- `scale`: `metric`
+- Processed frames and tracking statistics
+
+Execution logs are stored in `<session>/logs/orbslam3.log`.
+
+The Python runner also updates the `orbslam3` stage in `manifest.json` with execution status and output paths.
+
+### Viewer
+
+ORB-SLAM3 uses the Pangolin viewer during execution to visualize the camera trajectory and reconstructed map.
+
+- **Start:** Automatically when running the RGB-D executable.
+- **Save:** Atlas and trajectory files are saved when execution completes successfully.
+- **Stop:** The executable finishes after processing the session. The Hub also provides job cancellation, although child-process termination still needs improvement.
+
+### Known Problems
+
+- Tracking may become unstable during longer recordings, resulting in `RECENTLY_LOST`, `LOST`, and repeated relocalization attempts.
+- Some reconstructed maps become distorted before tracking is lost.
+- Experimental modifications to ORB-SLAM3's internal localization code caused repeated map resets. The earlier source backups were restored.
+- The current RGB-D implementation uses DA3-generated depth rather than physical depth measurements.
+- Tracking statistics in `trajectory_meta.json` are not yet fully reliable. In one test, `tracking_lost_count` was reported as zero despite visible tracking failures.
+- Monocular and visual-inertial modes have not been integrated into the current session-based pipeline.
+
+**Current status:** RGB-D session execution, Atlas and trajectory export, Doctor readiness checks, and NavSenseHub Run-button integration are implemented. Improving tracking accuracy remains future work.
 
 ## 9. VLM / language grounding
 

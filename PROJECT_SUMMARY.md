@@ -184,16 +184,90 @@ prints a harmless Qt "wrong permissions on runtime directory" warning under WSLg
 
 ---------------------------------------------------------------------------------------------------------------------
 
-## 10. ORB-SLAM3 - PLACEHOLDER
+## 10. ORB-SLAM3 Integration
 
-Known at a high level only: ORB-SLAM3 runs on the Linux machine; the team produced an EuRoC-style bundle
-(`mav0/`, `timestamps.txt`, `orbslam3_phone.yaml`) for it; early visual-inertial runs on streamed data showed map
-resets whose cause was not established. **Later to complete**, using section 8 of `SESSION_CONTRACT.md`:
+ORB-SLAM3 is integrated into NavSenseHub for offline RGB-D mapping using recorded phone RGB images and DA3-generated depth maps.
 
-- machine and build details, version/commit; modes that work and their commands;
-- settings yaml (intrinsics, IMU noise, `Tbc`) and where each value comes from;
-- how outputs map to `slam/orbslam3/trajectory_tum.txt` and `trajectory_meta.json`;
-- viewer start/save/stop procedure; known issues; the `orbslam3` block of `hub_config.json`.
+### Machine and Build
+
+- **OS:** EndeavourOS Linux (Arch-based).
+- **ORB-SLAM3 source:** `~/opt/orbslam-deps/ORB_SLAM3`.
+- **Version/commit:** Not recorded.
+- **Build:** CMake using OpenCV, Eigen3, Pangolin, Boost Serialization, and required shared libraries.
+- **ROS wrapper:** None; the current implementation uses a standalone C++ executable.
+- **Executable:** `orbslam/build/test_sample1_rgbd`.
+- **Readiness checks:** `NavSenseHub/doctor.py` checks the executable, session runner, settings YAML, ORB vocabulary, and shared libraries.
+
+### Implemented Mode
+
+**RGB-D mapping** is implemented and tested. Monocular and monocular-inertial modes are not integrated into the current session-based pipeline.
+
+Run directly:
+
+```bash
+./orbslam/build/test_sample1_rgbd \
+    "./NavSenseLogger/sessions/20261119_115854"
+```
+
+Or through the session runner:
+
+```bash
+python NavSenseHub/run_orbslam3.py \
+    --session "./NavSenseLogger/sessions/20261119_115854"
+```
+
+ORB-SLAM3 can also be launched using the **Run** button for any ready session in NavSenseHub.
+
+### Settings and Inputs
+
+- **Settings YAML:** `orbslam/orbslam3_tecno.yaml`.
+- **Camera:** Tecno CLA6, 720 × 1280.
+- **Calibration source:** `NavSenseLogger/calibration/tecno_cla6_720x1280.yaml`.
+- **RGB input:** `mav0/cam0/data/<timestamp>.jpg`.
+- **Depth input:** `depth/<timestamp>.png`, 16-bit, in millimetres.
+- **Depth source:** Depth Anything 3.
+- **Depth factor:** `RGBD.DepthMapFactor: 1000.0`.
+- **Timestamps:** Extracted from image filenames.
+- **IMU noise and Tbc:** Placeholder values, not used by RGB-D mode.
+
+### Outputs
+
+Each session stores its own results:
+
+```text
+<session>/
+├── slam/orbslam3/
+│   ├── atlas.osa
+│   ├── trajectory_tum.txt
+│   ├── keyframe_trajectory_tum.txt
+│   ├── trajectory_meta.json
+│   └── orbslam3_run.yaml
+└── logs/
+    └── orbslam3.log
+```
+
+The trajectory uses TUM format (`timestamp tx ty tz qx qy qz qw`). Metadata identifies the camera coordinate frame, metric scale, mapping mode, and processing statistics.
+
+The Python runner updates the session's `manifest.json` with the ORB-SLAM3 execution status and output paths.
+
+### Viewer and Hub
+
+- Pangolin displays the camera trajectory and reconstructed map during execution.
+- Atlas and trajectory outputs are saved after successful completion.
+- NavSenseHub launches the Python runner with the selected session path and displays live logs.
+- Doctor reports `orbslam3: ready` or `orbslam3: not ready`.
+- The Run button is enabled for sessions with the required RGB images, depth maps, and manifest.
+- `hub_config.json` supports local configuration; the ORB-SLAM3 Doctor check detects the current installation automatically.
+
+### Known Issues
+
+- Tracking can become unstable, causing relocalization attempts and eventual tracking loss.
+- Reconstructed maps may become distorted before tracking fails.
+- Earlier experimental localization changes caused repeated map resets; the previous ORB-SLAM3 source backups were restored.
+- Tracking statistics in `trajectory_meta.json` are not fully reliable.
+- Cancelling a Hub job may leave its child C++ process running on Linux.
+
+**Current status:** Offline RGB-D mapping, per-session outputs, Pangolin visualization, Doctor readiness checks, and NavSenseHub Run-button integration are implemented. Tracking accuracy and reliability remain unresolved.
 
 ## 11. VLM / language grounding
 
