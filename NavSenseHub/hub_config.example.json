@@ -24,13 +24,16 @@
   },
 
   "orbslam3": {
-    "_comment": "TODO: fill this on the ORB-SLAM3 machine, then set enabled=true. Example values are in the next line.",
-    "_example": {"required_paths": ["/home/USER/ORB_SLAM3/Examples/Monocular-Inertial/mono_inertial_euroc", "/home/USER/ORB_SLAM3/Vocabulary/ORBvoc.txt"], "smoke_command": ["/home/USER/ORB_SLAM3/Examples/Monocular-Inertial/mono_inertial_euroc"], "smoke_expect_rc": [0, 1]},
-    "enabled": false,
-    "required_paths": [],
+    "enabled": true,
+    "required_paths": [
+        "/home/jad/opt/orbslam-deps/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+        "/home/jad/opt/orbslam-deps/ORB_SLAM3/lib/libORB_SLAM3.so",
+        "/home/jad/Desktop/Final Year Project/NavSense/experiments/orbslam3_rgbd_baseline/build/localize_rgbd",
+        "/home/jad/Desktop/Final Year Project/rgb+depth/calib_localization.yaml"
+    ],
     "smoke_command": [],
     "smoke_expect_rc": [0],
-    "notes": ""
+    "notes": "Local standalone ORB-SLAM3 on EndeavourOS. RGB-D mapping available; Atlas relocalization under development."
   },
 
   "vlm": {
