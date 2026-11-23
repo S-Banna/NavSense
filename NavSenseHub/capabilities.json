@@ -1,13 +1,13 @@
 {
   "doctor_version": "0.1",
-  "time_utc": "2026-11-22T14:20:25Z",
+  "time_utc": "2026-11-23T16:36:02Z",
   "machine": {
-    "hostname": "user",
-    "os": "Windows-11-10.0.26300-SP0",
+    "hostname": "jadHP",
+    "os": "Linux-7.2.8-arch1-2-x86_64-with-glibc2.44",
     "wsl": false,
-    "python": "3.14.3"
+    "python": "3.14.7"
   },
-  "config": "config: C:\\FYP\\NavSense\\NavSenseHub\\hub_config.json",
+  "config": "config: /home/jad/Desktop/Final Year Project/Navsense-git/NavSense/NavSenseHub/hub_config.json",
   "checks": [
     {
       "group": "This machine",
@@ -20,221 +20,43 @@
     {
       "group": "This machine",
       "name": "python cv2",
-      "status": "ok",
-      "detail": "4.12.0",
-      "fix": "",
+      "status": "warn",
+      "detail": "not installed here",
+      "fix": "pip install opencv-python",
       "gates": []
     },
     {
       "group": "This machine",
       "name": "python av",
-      "status": "ok",
-      "detail": "19.0.0",
-      "fix": "",
+      "status": "warn",
+      "detail": "not installed here",
+      "fix": "pip install av",
       "gates": []
     },
     {
       "group": "DA3",
       "name": "DA3 folder",
-      "status": "ok",
-      "detail": "C:\\FYP\\Depth-Anything-3",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "DA3 source tree",
-      "status": "ok",
-      "detail": "src/depth_anything_3 found",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "DA3 python",
-      "status": "ok",
-      "detail": "C:\\FYP\\da3-env\\Scripts\\python.exe  (found via: configured da3.python)",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "Python version",
-      "status": "ok",
-      "detail": "3.11.9",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "PyTorch",
-      "status": "ok",
-      "detail": "2.11.0+cu128 (CUDA build 12.8)",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "CUDA GPU",
-      "status": "ok",
-      "detail": "NVIDIA GeForce RTX 4050 Laptop GPU | 6.0 GB",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "xformers",
-      "status": "ok",
-      "detail": "0.0.35",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "depth_anything_3 import",
-      "status": "ok",
-      "detail": "imported from C:\\FYP\\Depth-Anything-3\\src\\depth_anything_3\\api.py",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "da3 CLI",
-      "status": "ok",
-      "detail": "found",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "DA3 weights",
-      "status": "ok",
-      "detail": "depth-anything/DA3METRIC-LARGE cached",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "probe time",
-      "status": "ok",
-      "detail": "18 s",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "DA3",
-      "name": "DA3 runner script",
-      "status": "ok",
-      "detail": "C:\\FYP\\NavSense\\NavSenseHub\\da3_session_runner.py",
-      "fix": "",
+      "status": "fail",
+      "detail": "not found: C:\\FYP\\Depth-Anything-3",
+      "fix": "git clone https://github.com/ByteDance-Seed/Depth-Anything-3 there, or fix da3.path in hub_config.json",
       "gates": [
         "depth_da3"
       ]
     },
     {
-      "group": "DA3",
-      "name": "DA3 smoke test",
-      "status": "skip",
-      "detail": "no da3.smoke_command configured",
-      "fix": "",
-      "gates": []
-    },
-    {
       "group": "ROS 2",
       "name": "Linux distro",
-      "status": "ok",
-      "detail": "Ubuntu 24.04.5 LTS",
+      "status": "warn",
+      "detail": "\"EndeavourOS Linux\"",
       "fix": "the setup in this project was Ubuntu 24.04 + Jazzy",
       "gates": []
     },
     {
       "group": "ROS 2",
       "name": "ROS 2 install",
-      "status": "ok",
-      "detail": "ROS_DISTRO=jazzy, ros2 at /opt/ros/jazzy/bin/ros2",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "RTAB-Map packages",
-      "status": "ok",
-      "detail": "rtabmap_ros present",
-      "fix": "",
-      "gates": [
-        "rtabmap_offline",
-        "rtabmap_live"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "navsense workspace",
-      "status": "ok",
-      "detail": "$HOME/navsense_ws",
-      "fix": "",
-      "gates": [
-        "rtabmap_offline",
-        "live_ingest"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "navsense_bridge 'bridge'",
-      "status": "ok",
-      "detail": "installed",
-      "fix": "",
-      "gates": [
-        "live_ingest"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "navsense_bridge 'replay'",
-      "status": "ok",
-      "detail": "installed",
-      "fix": "",
-      "gates": [
-        "rtabmap_offline"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "python3 av (WSL)",
-      "status": "ok",
-      "detail": "19.0.2",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "python3 cv2 (WSL)",
-      "status": "ok",
-      "detail": "4.6.0",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "python3 numpy (WSL)",
-      "status": "ok",
-      "detail": "1.26.4",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "python3 yaml (WSL)",
-      "status": "ok",
-      "detail": "6.0.1",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "ROS 2 daemon",
-      "status": "ok",
-      "detail": "The daemon is running",
-      "fix": "ros2 daemon stop; ros2 daemon start   (this exact problem cost us hours once)",
+      "status": "fail",
+      "detail": "/opt/ros/jazzy/setup.bash not found",
+      "fix": "sudo apt install ros-jazzy-desktop ros-dev-tools (see PROJECT_SUMMARY.md, section ROS 2 on WSL2)",
       "gates": [
         "rtabmap_offline",
         "live_ingest",
@@ -243,119 +65,44 @@
       ]
     },
     {
-      "group": "ROS 2",
-      "name": "ros2 topic list",
+      "group": "ORB-SLAM3",
+      "name": "session runner",
       "status": "ok",
-      "detail": "works",
-      "fix": "restart the daemon: ros2 daemon stop; ros2 daemon start",
-      "gates": [
-        "rtabmap_offline",
-        "live_ingest",
-        "rtabmap_live",
-        "nav2"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "GUI (WSLg)",
-      "status": "ok",
-      "detail": ":0wayland-0",
-      "fix": "Windows 11 WSLg should provide it; try wsl --update",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "maps folder",
-      "status": "ok",
-      "detail": "$HOME/maps",
-      "fix": "mkdir -p ~/maps",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "optional pkg teleop_twist_keyboard",
-      "status": "ok",
-      "detail": "present",
-      "fix": "sudo apt install ros-jazzy-teleop-twist-keyboard",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "optional pkg camera_calibration",
-      "status": "ok",
-      "detail": "present",
-      "fix": "sudo apt install ros-jazzy-camera-calibration",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "optional pkg rqt_image_view",
-      "status": "ok",
-      "detail": "present",
-      "fix": "sudo apt install ros-jazzy-rqt-image-view",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "optional pkg robot_localization",
-      "status": "ok",
-      "detail": "present",
-      "fix": "sudo apt install ros-jazzy-robot-localization",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "Nav2 packages",
-      "status": "ok",
-      "detail": "present",
+      "detail": "/home/jad/Desktop/Final Year Project/Navsense-git/NavSense/NavSenseHub/run_orbslam3.py",
       "fix": "",
-      "gates": [
-        "nav2"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "TCP port 8765",
-      "status": "ok",
-      "detail": "free",
-      "fix": "",
-      "gates": [
-        "live_ingest"
-      ]
-    },
-    {
-      "group": "ROS 2",
-      "name": "WSL mirrored networking",
-      "status": "ok",
-      "detail": "networkingMode=mirrored",
-      "fix": "",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "Windows firewall rule",
-      "status": "ok",
-      "detail": "rule 'NavSense 8765' present",
-      "fix": "admin PowerShell: New-NetFirewallRule -DisplayName 'NavSense 8765' -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow",
-      "gates": []
-    },
-    {
-      "group": "ROS 2",
-      "name": "Hyper-V firewall rule",
-      "status": "ok",
-      "detail": "rule 'NavSense 8765' present",
-      "fix": "admin PowerShell: New-NetFirewallHyperVRule -DisplayName 'NavSense 8765' -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 8765",
       "gates": []
     },
     {
       "group": "ORB-SLAM3",
-      "name": "ORB-SLAM3",
-      "status": "todo",
-      "detail": "PLACEHOLDER: ORB-SLAM3 is not configured on this machine. Fill the 'orbslam3' block in hub_config.json (and extend check_orbslam3() in doctor.py if you need more than path/command checks).",
+      "name": "RGB-D executable",
+      "status": "ok",
+      "detail": "/home/jad/Desktop/Final Year Project/Navsense-git/NavSense/experiments/orbslam3_rgbd_baseline/build/test_sample1_rgbd",
       "fix": "",
-      "gates": [
-        "orbslam3"
-      ]
+      "gates": []
+    },
+    {
+      "group": "ORB-SLAM3",
+      "name": "Tecno settings",
+      "status": "ok",
+      "detail": "/home/jad/Desktop/Final Year Project/Navsense-git/NavSense/experiments/orbslam3_rgbd_baseline/orbslam3_tecno.yaml",
+      "fix": "",
+      "gates": []
+    },
+    {
+      "group": "ORB-SLAM3",
+      "name": "ORB vocabulary",
+      "status": "ok",
+      "detail": "/home/jad/opt/orbslam-deps/ORB_SLAM3/Vocabulary/ORBvoc.txt",
+      "fix": "",
+      "gates": []
+    },
+    {
+      "group": "ORB-SLAM3",
+      "name": "shared libraries",
+      "status": "ok",
+      "detail": "all shared libraries resolved",
+      "fix": "",
+      "gates": []
     },
     {
       "group": "VLM",
@@ -374,30 +121,38 @@
       "blocked_by": []
     },
     "depth_da3": {
-      "ready": true,
-      "blocked_by": []
-    },
-    "rtabmap_offline": {
-      "ready": true,
-      "blocked_by": []
-    },
-    "orbslam3": {
       "ready": false,
       "blocked_by": [
-        "ORB-SLAM3: ORB-SLAM3 [todo]"
+        "DA3: DA3 folder [fail]"
       ]
     },
-    "live_ingest": {
+    "rtabmap_offline": {
+      "ready": false,
+      "blocked_by": [
+        "ROS 2: ROS 2 install [fail]"
+      ]
+    },
+    "orbslam3": {
       "ready": true,
       "blocked_by": []
+    },
+    "live_ingest": {
+      "ready": false,
+      "blocked_by": [
+        "ROS 2: ROS 2 install [fail]"
+      ]
     },
     "rtabmap_live": {
-      "ready": true,
-      "blocked_by": []
+      "ready": false,
+      "blocked_by": [
+        "ROS 2: ROS 2 install [fail]"
+      ]
     },
     "nav2": {
-      "ready": true,
-      "blocked_by": []
+      "ready": false,
+      "blocked_by": [
+        "ROS 2: ROS 2 install [fail]"
+      ]
     },
     "vlm": {
       "ready": false,

@@ -1,0 +1,57 @@
+%YAML:1.0
+---
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+Camera1.fx: 1139.39
+Camera1.fy: 1127.84
+Camera1.cx: 356.41
+Camera1.cy: 625.81
+Camera1.k1: 0.113168028
+Camera1.k2: 0.146371408
+Camera1.p1: 0.00399940152
+Camera1.p2: -0.00210289154
+Camera1.k3: -5.56445807
+
+Camera.width: 720
+Camera.height: 1280
+Camera.fps: 30
+Camera.RGB: 0
+Stereo.b: 0.1
+Stereo.ThDepth: 40.0
+RGBD.DepthMapFactor: 1000.0
+
+IMU.T_b_c1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [1.0, 0.0, 0.0, 0.0,
+          0.0, 1.0, 0.0, 0.0,
+          0.0, 0.0, 1.0, 0.0,
+          0.0, 0.0, 0.0, 1.0]
+
+IMU.NoiseGyro: 0.001
+IMU.NoiseAcc: 0.01
+IMU.GyroWalk: 0.0001
+IMU.AccWalk: 0.001
+IMU.Frequency: 200.0
+
+ORBextractor.nFeatures: 2500
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 12
+ORBextractor.minThFAST: 5
+
+Viewer.KeyFrameSize: 0.08
+Viewer.KeyFrameLineWidth: 1.5
+Viewer.GraphLineWidth: 1.2
+Viewer.PointSize: 3.0
+Viewer.CameraSize: 0.12
+Viewer.CameraLineWidth: 4.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.0
+Viewer.ViewpointF: 500.0
+
+#System.LoadAtlasFromFile: "navsense_map"

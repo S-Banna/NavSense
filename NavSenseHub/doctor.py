@@ -26,6 +26,7 @@ import argparse
 import base64
 import copy
 import json
+from pathlib import Path
 import os
 import platform
 import re
@@ -551,11 +552,57 @@ def rep_has_gate(rep, group, stage):
 
 
 def check_orbslam3(cfg, rep, smoke):
-    # ===== PLACEHOLDER (teammate): ORB-SLAM3 =====
-    # Default behaviour is generic (paths + smoke command from hub_config.json["orbslam3"]).
-    # Replace or extend with real checks for your setup, e.g. the built binary, ORBvoc.txt, the settings yaml,
-    # OpenCV/Pangolin versions, whether a display is available for the viewer, ...
-    check_external_tool("orbslam3", "ORB-SLAM3", cfg, rep, smoke, "orbslam3")
+    """Check the local NavSense RGB-D SLAM installation without running a session."""
+    group, gate = "ORB-SLAM3", ["orbslam3"]
+    rep.cover("orbslam3")
+
+    repo = Path(__file__).resolve().parent.parent
+    base = repo / "experiments" / "orbslam3_rgbd_baseline"
+    binary = base / "build" / "test_sample1_rgbd"
+    runner = repo / "NavSenseHub" / "run_orbslam3.py"
+    settings = base / "orbslam3_tecno.yaml"
+    vocabulary = Path.home() / "opt/orbslam-deps/ORB_SLAM3/Vocabulary/ORBvoc.txt"
+
+    for name, path, executable in (
+        ("session runner", runner, False),
+        ("RGB-D executable", binary, True),
+        ("Tecno settings", settings, False),
+        ("ORB vocabulary", vocabulary, False),
+    ):
+        good = path.is_file() and (not executable or os.access(path, os.X_OK))
+        rep.add(group, name, OK if good else FAIL, str(path),
+                fix="Build ORB-SLAM3 or correct the expected path" if not good else "",
+                gates=[] if good else gate)
+
+    # The runner passes these compatibility directories via LD_LIBRARY_PATH.
+    lib_root = Path.home() / "opt/orbslam-deps"
+    lib_paths = [
+        lib_root / "openjph-0.31-compat/usr/lib",
+        lib_root / "openexr-3.4-compat/usr/lib",
+        lib_root / "opencv-4.6.0-install/lib",
+    ]
+    if binary.is_file() and os.access(binary, os.X_OK):
+        env = os.environ.copy()
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            [str(p) for p in lib_paths] + ([env["LD_LIBRARY_PATH"]] if env.get("LD_LIBRARY_PATH") else [])
+        )
+        try:
+            result = subprocess.run(["ldd", str(binary)], capture_output=True, text=True,
+                                    timeout=15, env=env)
+            missing = [line.strip() for line in (result.stdout + "\n" + result.stderr).splitlines()
+                       if "not found" in line]
+            good = result.returncode == 0 and not missing
+            detail = "; ".join(missing) if missing else ("all shared libraries resolved" if good else result.stderr.strip()[-300:])
+            rep.add(group, "shared libraries", OK if good else FAIL, detail,
+                    fix="Check the OpenEXR/OpenCV compatibility library paths" if not good else "",
+                    gates=[] if good else gate)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            rep.add(group, "shared libraries", FAIL, str(exc), gates=gate)
+    else:
+        rep.add(group, "shared libraries", FAIL, "executable unavailable", gates=gate)
+
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        rep.add(group, "viewer display", WARN, "no DISPLAY/WAYLAND_DISPLAY; Pangolin viewer may not open")
 
 
 def check_vlm(cfg, rep, smoke):

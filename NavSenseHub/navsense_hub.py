@@ -12,7 +12,7 @@ script as a subprocess, shows its output live, and re-reads manifest.json to sho
   step 2  Calibration   install_calibration.py <s>          (runs step 1 first if there is no manifest)
   step 3  Depth (DA3)   da3_session_runner.py --session <s> [--dry-run]    (uses the DA3 env's python from hub_config.json)
   --      Doctor        doctor.py --out capabilities.json   (what can this machine run?)
-  --      ORB-SLAM3     PLACEHOLDER (teammate). See build_orbslam3_steps() below.
+  step 4  ORB-SLAM3     run_orbslam3.py --session <s>
 
 Only one job runs at a time (the GPU, and simpler logs). The server listens on 127.0.0.1 only, and can only run the
 fixed actions above on folders that exist directly inside the sessions directory.
@@ -270,22 +270,40 @@ class Jobs:
 
 
 # ====================================================================================== actions
-ORBSLAM3_IMPLEMENTED = False
+ORBSLAM3_IMPLEMENTED = True
+
+
+def orbslam3_readiness(cfg: Config):
+    """Use Doctor's ORB-SLAM3 machine readiness report."""
+    caps = read_json(cfg.caps) or {}
+    return (caps.get("stages") or {}).get(
+        "orbslam3", {"ready": None, "blocked_by": ["Run doctor to check ORB-SLAM3"]}
+    )
 
 
 def build_orbslam3_steps(cfg: Config, session: Path):
-    """
-    ===== PLACEHOLDER (teammate): ORB-SLAM3 =====
-    NOT IMPLEMENTED ON PURPOSE. To wire it in:
-      1. Write the stage script per SESSION_CONTRACT.md section 5 ("stage runner interface") and section 8:
-            <orbslam3 command> --session <folder> [--params <json>] [--dry-run]
-         It must update stages.orbslam3 in manifest.json and write slam/orbslam3/trajectory_tum.txt + trajectory_meta.json.
-      2. Return the steps here, e.g.
-            return [("ORB-SLAM3", [python, str(script), "--session", str(session)], script.parent)]
-      3. Set ORBSLAM3_IMPLEMENTED = True (the UI button enables itself from that flag).
-      4. Fill the "orbslam3" block of hub_config.json so doctor.py can verify the install.
-    """
-    raise NotImplementedError("ORB-SLAM3 is a placeholder: see build_orbslam3_steps() in navsense_hub.py")
+    script = HERE / "run_orbslam3.py"
+
+    if not script.is_file():
+        raise FileNotFoundError(f"ORB-SLAM3 runner not found: {script}")
+
+    if not (session / "manifest.json").is_file():
+        raise ValueError("Session has no manifest.json")
+
+    if orbslam3_readiness(cfg).get("ready") is not True:
+        raise ValueError("ORB-SLAM3 not ready. Run doctor and check its report.")
+
+    if count_files(session / "mav0" / "cam0" / "data", IMG_EXTS) == 0:
+        raise ValueError("Session has no RGB frames")
+
+    frames = count_files(session / "mav0" / "cam0" / "data", IMG_EXTS)
+    depth = count_files(session / "depth", {".png"})
+    if depth < frames:
+        raise ValueError(f"Session depth incomplete ({depth}/{frames}). Run DA3 first.")
+
+    cmd = [sys.executable, str(script), "--session", str(session)]
+
+    return [("4. ORB-SLAM3 RGB-D", cmd, HERE)]
 
 
 def start_action(cfg: Config, jobs: Jobs, action: str, sid: str | None):
@@ -318,8 +336,6 @@ def start_action(cfg: Config, jobs: Jobs, action: str, sid: str | None):
         jobs.start(f"DA3{' dry run' if action == 'da3_dry' else ''}: {s.name}", action, s,
                    [("3. Depth (DA3)", cmd, cfg.da3_script.parent)])
     elif action == "orbslam3":
-        if not ORBSLAM3_IMPLEMENTED:
-            raise NotImplementedError("ORB-SLAM3 is a placeholder for the teammate (see build_orbslam3_steps in navsense_hub.py)")
         jobs.start(f"ORB-SLAM3: {s.name}", action, s, build_orbslam3_steps(cfg, s))
     elif action in ("open_folder", "open_depth"):
         target = s / "depth" if action == "open_depth" else s
@@ -363,7 +379,8 @@ def make_handler(cfg: Config, jobs: Jobs):
                 caps = read_json(cfg.caps)
                 self._json({"config": cfg.describe(), "sessions": list_sessions(cfg), "doctor": caps,
                             "doctor_age_s": (time.time() - cfg.caps.stat().st_mtime) if cfg.caps.is_file() else None,
-                            "orbslam3_implemented": ORBSLAM3_IMPLEMENTED})
+                            "orbslam3_implemented": ORBSLAM3_IMPLEMENTED,
+                            "orbslam3_readiness": orbslam3_readiness(cfg)})
             elif u.path == "/api/job":
                 start = int(parse_qs(u.query).get("from", ["0"])[0] or 0)
                 self._json(jobs.snapshot(start))
@@ -432,12 +449,6 @@ pre{margin:0;background:#0b0e12;color:#d7dde4;padding:10px;border-radius:6px;max
 <div id="empty" class="mut" hidden>No session folders found.</div></div>
 <div class="card"><h2>Job output <span id="jobTitle" class="mut"></span> <button id="cancelBtn" hidden>Cancel</button></h2>
 <div class="bar"><div id="prog"></div></div><pre id="log">Nothing run yet.</pre></div>
-<div class="card ph"><h2>ORB-SLAM3 &mdash; PLACEHOLDER (left for the teammate)</h2>
-<div class="small">The hub intentionally does <b>not</b> run ORB-SLAM3 yet. Its button above is disabled until it is wired in.
-What to do: read <code>SESSION_CONTRACT.md</code> section 8 and the <code>orbslam3</code> stage's <code>todo</code> list in any session's <code>manifest.json</code>;
-write the stage script (<code>--session &lt;folder&gt; [--dry-run]</code>, results in <code>slam/orbslam3/</code>); then implement
-<code>build_orbslam3_steps()</code> in <code>navsense_hub.py</code>, set <code>ORBSLAM3_IMPLEMENTED = True</code>, and fill the <code>orbslam3</code> block in <code>hub_config.json</code>.
-Machine-side inputs already exist per session: <code>mav0/</code>, <code>timestamps.txt</code>, <code>orbslam3_phone.yaml</code> (its intrinsics are still a guess; the real ones are in <code>calibration/camera_info.yaml</code>).</div></div>
 <div class="small mut">Not wired into the hub yet: RTAB-Map (WSL2), live ingest, Nav2, VLM. Use the commands in PROJECT_SUMMARY.md for those.</div>
 </main>
 <script>
@@ -455,12 +466,13 @@ function render(){
   $('#cfgwarn').innerHTML=warn.length?chip('bad','config problem')+' '+esc(warn.join(' | ')):'';
   const d=state.doctor,st=$('#stages');st.innerHTML='';
   const names=['prepare','depth_da3','rtabmap_offline','orbslam3'];
-  if(!d){st.innerHTML='<span class="mut">Doctor has not been run yet. Click "Run doctor".</span>';}
-  else for(const n of names){const s=(d.stages||{})[n];let h;
-    if(n==='orbslam3')h=chip('warn','orbslam3: placeholder (teammate)',(s&&s.blocked_by||[]).join('\n'));
-    else if(!s||s.ready===null)h=chip('mute',n+': not checked');
+  for(const n of names){
+    const s=(d&&d.stages||{})[n];
+    let h;
+    if(!s||s.ready===null||s.ready===undefined)h=chip('mute',n+': not checked');
     else h=chip(s.ready?'ok':'bad',n+(s.ready?': ready':': not ready'),(s.blocked_by||[]).join('\n'));
-    st.insertAdjacentHTML('beforeend',h);}
+    st.insertAdjacentHTML('beforeend',h);
+  }
   $('#doctorAge').textContent=state.doctor_age_s!=null?`doctor ran ${Math.round(state.doctor_age_s/60)} min ago`:'';
   const rows=$('#rows');rows.innerHTML='';$('#empty').hidden=state.sessions.length>0;
   const da3ok=c.da3_script.exists;
@@ -481,14 +493,22 @@ function render(){
     if(s.da3_status==='failed')dep+=' '+chip('bad','last run failed',s.da3_error||'');
     const gyro=s.gyro_verdict?chip(s.gyro_verdict==='ok'?'ok':'bad','gyro '+s.gyro_verdict):'';
     const dwhy=!s.has_manifest?'Generate the manifest first':(!hasF?'no frames':(!da3ok?'DA3 runner not found':''));
-    const orb=state.orbslam3_implemented?btn('Run','orbslam3',s.id,{dis:!s.has_manifest}):btn('Run','orbslam3',s.id,{dis:true,why:'Placeholder: left for the teammate'});
+    const reasons=[];
+    if(state.orbslam3_readiness.ready!==true){
+      reasons.push(...(state.orbslam3_readiness.blocked_by||['Run doctor to check ORB-SLAM3']));
+    }
+    if(!s.manifest_ok)reasons.push('Manifest missing or unreadable');
+    if(!hasF)reasons.push('RGB frames missing');
+    if(s.depth_count<s.frames||s.depth_count===0)reasons.push('Depth images incomplete or missing');
+    const orbReady=reasons.length===0;
+    const orb=btn('Run','orbslam3',s.id,{dis:!orbReady,why:reasons.join('\n')});
     rows.insertAdjacentHTML('beforeend',`<tr>
       <td><span class="sid">${esc(s.id)}</span><div class="mut small">${esc(s.label)}</div><div class="row">${btn('Open folder','open_folder',s.id)}</div></td>
       <td>${s.frames} frames<div style="margin-top:4px">${gyro}</div></td>
       <td>${manifest}<div class="row">${btn(s.has_manifest?'Regenerate':'Generate','manifest',s.id,{primary:!s.has_manifest})}</div></td>
       <td>${cal}<div class="row">${btn('Install calibration','calibration',s.id,{dis:!hasF,why:hasF?'':'no frames'})}</div></td>
       <td>${dep}<div class="row">${btn('Dry run','da3_dry',s.id,{dis:!!dwhy,why:dwhy})}${btn(s.depth_count?'Rerun DA3':'Run DA3','da3',s.id,{dis:!!dwhy,why:dwhy,primary:s.has_manifest&&s.depth_count===0})}${s.depth_count?btn('Open depth','open_depth',s.id):''}</div></td>
-      <td>${chip('warn','placeholder')}<div class="row">${orb}</div></td></tr>`);}
+      <td>${chip(orbReady?'ok':'bad',orbReady?'ready':'not ready',reasons.join('\n'))}<div class="row">${orb}</div></td></tr>`);}
 }
 function state_job_running(s){return busy&&window._jobSession===s.id;}
 async function refresh(){state=await api('/api/state');render();}
