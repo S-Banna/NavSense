@@ -115,7 +115,7 @@ transfer. The manifest's `streams.*.present` flags say what is really there.
   linearly interpolated onto it. This is what SLAM tools need (they cannot take two unsynchronised streams).
 - `gyro_verdict` in the manifest: `ok`, `fake` (software-generated: perfectly regular timestamps, zero axes),
   `missing` (no gyro samples), `unknown`. **A session with `fake`/`missing` is not usable for visual-inertial work.**
-- Encoders: `left` and `right` are cumulative rising-edge counts since the Arduino booted (left = D12,
+- Encoders: `left` and `right` are cumulative rising-edge counts since the Arduino booted (left = D3,
   right = D2). Single channel: **no direction information** (the car only drives forward). They reset when the
   Arduino resets (each time the phone app opens the USB port on Uno/Nano boards): a drop in the count means a reset.
 
