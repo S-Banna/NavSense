@@ -1,4 +1,3 @@
-
 // L298N motor pins
 const int IN1 = 5;   // Left motor forward (PWM)
 const int IN2 = 6;   // Left motor reverse
