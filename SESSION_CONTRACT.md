@@ -47,7 +47,7 @@ Companion files: `manifest.schema.json` (formal shape), `manifest.example.json` 
   session_meta.json                sensor_orientation, rotation_cw_deg, frames_fmt   receiver
   session_info.json                counts, IMU health verdict, durations          receiver
   # ---- derived by "prepare" (regenerable from the raw files) -------------------------------------------
-  mav0/cam0/data/<ts_ns>.jpg|png   RGB frames, upright PORTRAIT, named by capture time   receiver (live) or extract_frames.py
+  mav0/cam0/data/<ts_ns>.jpg|png   RGB frames, upright LANDSCAPE, named by capture time   receiver (live) or extract_frames.py
   mav0/cam0/data.csv               "#timestamp [ns],filename"                      prepare
   mav0/imu0/data.csv               merged 6-axis IMU, EuRoC column order           prepare
   timestamps.txt                   one frame timestamp (ns) per line               prepare
@@ -91,21 +91,20 @@ transfer. The manifest's `streams.*.present` flags say what is really there.
   must still use BigInt if a phone has been up for >100 days.
 
 ### 3.2 Coordinate frames
-- **Image / camera frame** (OpenCV optical): x right, y down, z forward. Images are saved **upright portrait**
-  (the landscape sensor image rotated clockwise by `rotation_cw_deg`, normally = `sensor_orientation`, 90).
-  All intrinsics refer to this saved portrait image.
-- **IMU / body frame** (Android device frame, phone held portrait): x right, y up, z out of the screen.
+- **Image / camera frame(()) (OpenCV optical): x right, y down, z forward. Images are saved **upright landscape**
+  1280×720 (back camera, phone landscape, top of phone to the robot's left, rotation_cw_deg = 0). All
+  intrinsics refer to this saved landscape image.
+- **IMU / body frame** (Android device frame, phone held landscape): x right, y up, z out of the screen.
 - **Robot frame `base_link`** (ROS REP-105): x forward, y left, z up. **Map** frame: same convention.
 - **Expected mounting**: phone in landscape, back camera facing forward.
 
   | transform | rotation matrix (rows) | note |
   |---|---|---|
   | base_link -> camera (optical) | `[[0,0,1],[-1,0,0],[0,-1,0]]` | = rpy(-90deg, 0, -90deg); quaternion (-0.5, 0.5, -0.5, 0.5) |
-  | base_link -> imu (Android axes) | `[[0,0,-1],[-1,0,0],[0,1,0]]` | |
-  | imu -> camera (R_b_c for SLAM) | `diag(1,-1,-1)` | consistent with the two rows above |
+  | base_link -> imu (Android axes) | `[[0,0,-1],[0,1,0],[1,0,0]]` | |
+  | imu -> camera (R_b_c for SLAM) | `[[0,-1,0],[-1,0,0],[0,0,-1]]` | consistent with the two rows above |
 
-  If the saved images are NOT rotated to portrait (`rotation_cw_deg` = 0) the camera rotation changes; the
-  receiver's `r_body_cam(sensor_orientation, applied_cw)` computes the general case.
+  rotation_cw_deg = 0 on this phone; r_body_cam(90, 0) gives the landscape camera -> body rotation. If a future phone needs a different rotation_cw_deg, r_body_cam computes the general case.
 
 ### 3.3 Units and sensors
 - Gyro: rad/s. Accelerometer: m/s^2 **including gravity** (a still phone reads ~9.8 on one axis). Both in the
@@ -121,7 +120,7 @@ transfer. The manifest's `streams.*.present` flags say what is really there.
 
 ### 3.4 Depth (stage `depth_da3`)
 - `depth/<ts_ns>.png`: 16-bit PNG, **millimetres**, 0 = invalid, same pixel grid as the RGB frame with the same
-  timestamp (portrait). ROS replay converts to 32-bit float metres.
+  timestamp. ROS replay converts to 32-bit float metres.
 - DA3 metric models need the focal length: metric depth = focal_px x network_output / 300 (focal = mean of fx, fy).
   Hence the stage depends on `calibration/camera_info.yaml` (or documented placeholder intrinsics) and
   records `focal_px_used` in `depth_meta.json`.
@@ -269,8 +268,8 @@ The session can also be selected through the **ORB-SLAM3 Run** button in NavSens
 ### Settings and Calibration
 
 - **Settings file:** `orbslam/orbslam3_tecno.yaml`.
-- **Camera:** Tecno CLA6, recording at 720 × 1280.
-- **Intrinsics source:** Phone camera calibration stored in `NavSenseLogger/calibration/tecno_cla6_720x1280.yaml`.
+- **Camera:** Tecno CLA6, recording at 720 × 1280. Newer recordings use Infinix Note 30 Pro (X678B), 1280 × 720.
+- **Intrinsics source:** Phone camera calibration stored in `NavSenseLogger/calibration/[PHONE].yaml`.
 - **Depth:** 16-bit PNG depth maps in millimetres, generated using Depth Anything 3.
 - **Depth factor:** `RGBD.DepthMapFactor: 1000.0`.
 - **IMU noise and Tbc:** Placeholder values in the settings file. Not used by the current RGB-D pipeline.

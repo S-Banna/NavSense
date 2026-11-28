@@ -96,7 +96,7 @@ Current design:
 ## 5. Windows receiver (recording) - `navsense_receiver.py` v0.4
 
 Runs on the lead's Windows laptop. `python navsense_receiver.py --no-display` listens on port 8765.
-- Decodes H.264 (PyAV), rotates frames to **portrait** using the camera's sensor orientation, and writes them
+- Decodes H.264 (PyAV) and writes them
   on background threads as `mav0/cam0/data/<capture_ns>.jpg` (PNG optional). Frame names carry the capture time.
 - Saves everything in the layout of `SESSION_CONTRACT.md` (raw video + per-packet index, `imu.jsonl`,
   `encoder.csv`, `events.jsonl`, `clock_sync.json`, `session_info.json`).
@@ -148,7 +148,7 @@ prints a harmless Qt "wrong permissions on runtime directory" warning under WSLg
 
 - Input: two recordings as folders `rgb/` (jpg) and `depth/` (16-bit PNG, millimetres) named `*_frame_NNNN`:
   `output_orbslam_metric3` (corridor + room, 1035 frames) and `output_orbslam_metric4` (second pass, ~1028 frames).
-  Images are 720x1280 portrait; intrinsics from the ORB-SLAM3 settings `camera.yaml` (fx 1042.0, fy 1040.3,
+  DEPRECATED: Images are 720x1280 portrait; intrinsics from the ORB-SLAM3 settings `camera.yaml` (fx 1042.0, fy 1040.3,
   cx 358.9, cy 646.4, 30 fps); typical depth ~5.7 m (plausible indoors).
 - Mapping: `ros2 launch rtabmap_launch rtabmap.launch.py rtabmap_args:="--delete_db_on_start" rgb_topic:=...
   depth_topic:=... camera_info_topic:=... frame_id:=base_link approx_sync:=false qos:=1 database_path:=~/maps/<name>.db
@@ -175,11 +175,10 @@ prints a harmless Qt "wrong permissions on runtime directory" warning under WSLg
 
 | item | state | plan |
 |---|---|---|
-| Camera intrinsics (portrait 720x1280) | placeholder (ORB-SLAM3 yaml from earlier runs) | checkerboard with `camera_calibration`, focus locked |
-| Camera-IMU rotation | derived from Android axes (`diag(1,-1,-1)`) | verify |
+| Camera intrinsics (1280x720) | calibrated against two phones | checkerboard with `camera_calibration`, focus locked |
+| Camera-IMU rotation | landscape matrices (see table 2.2 in session contract), status still derived, untested | verify |
 | Camera-IMU translation + time offset | unknown (zeros) | Kalibr, or online estimation inside the VIO |
-| Wheel: pulses per metre (L/R) | unknown | drive a measured distance, divide |
-| Wheel: effective track width | unknown | pivot test: moving-wheel distance / turned angle |
+| Wheel | calibrated by arithmetic, still needs the 2 m taped test | m_per_pulse = 0.0102102, pulses_per_m = 97.94, track_width_m = 0.135; track width 135 mm is geometric; effective width during pivot is larger (wheel scrub), should measure before trusting it for turns |
 | IMU noise | EuRoC defaults x5 | Allan variance, or static recording (`--static-seconds`) |
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -221,7 +220,7 @@ ORB-SLAM3 can also be launched using the **Run** button for any ready session in
 ### Settings and Inputs
 
 - **Settings YAML:** `orbslam/orbslam3_tecno.yaml`.
-- **Camera:** Tecno CLA6, 720 × 1280.
+- **Camera:** Tecno CLA6, 720 × 1280, newer recordings use Infinix Note 30 Pro, 1280 × 720.
 - **Calibration source:** `NavSenseLogger/calibration/tecno_cla6_720x1280.yaml`.
 - **RGB input:** `mav0/cam0/data/<timestamp>.jpg`.
 - **Depth input:** `depth/<timestamp>.png`, 16-bit, in millimetres.
