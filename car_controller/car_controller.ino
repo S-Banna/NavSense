@@ -13,7 +13,7 @@ const unsigned long ENC_PRINT_MS = 100;
 const unsigned long ENC_MIN_PULSE_US = 200;
 
 // Speed settings
-const int SPEED = 120;       // 0-255
+const int SPEED = 90;       // 0-255
 const int KICK_MS = 0;      // Full-power startup burst; 0 disables it
 
 bool moving = false;
