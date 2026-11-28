@@ -19,7 +19,7 @@ def main():
     ap.add_argument("session")
     ap.add_argument("--fmt", choices=["jpg", "png"], default="jpg")
     ap.add_argument("--quality", type=int, default=95)
-    ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="auto")
+    ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="0")
     ap.add_argument("--out", default=None, help="output folder (default <session>/mav0/cam0/data)")
     a = ap.parse_args()
     sd = Path(a.session)
@@ -28,10 +28,7 @@ def main():
         sys.exit("video.jsonl has no file_offset: this session was recorded by an older receiver; cannot re-decode.")
     if not (sd / "video.h264").exists():
         sys.exit("video.h264 missing (session recorded with --no-h264).")
-    rot = 90
-    if (sd / "session_meta.json").exists():
-        rot = int(json.load(open(sd / "session_meta.json")).get("sensor_orientation", 90))
-    deg = rot if a.rotate == "auto" else int(a.rotate)
+    deg = 0 if a.rotate == "auto" else int(a.rotate)
     code = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}.get(deg % 360)
     out = Path(a.out) if a.out else sd / "mav0" / "cam0" / "data"
     out.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,9 @@
+Encoder disc resolution: 20 lines/slots.
+
+Motor gear ratio: 1:48.
+
+Pulses per output shaft revolution (single edge counting): 20 × 48 = 960 pulses.
+
+Wheel diameter: 65mm, circumference ≈ 204.2mm.
+
+Distance per pulse: 204.2mm / 960 ≈ 0.213mm/pulse.

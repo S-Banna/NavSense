@@ -1,0 +1,3 @@
+{"encoder_position": "wheel shaft", "pulses_per_wheel_rev": 20,
+ "counting": "rising edge, single channel", "wheel_diameter_m": 0.065,
+ "m_per_pulse": 0.0102102, "pulses_per_m": 97.94, "track_width_m": 0.135}

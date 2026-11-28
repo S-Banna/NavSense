@@ -475,7 +475,7 @@ class Session:
 
     def applied_rotation(self):
         """Clockwise degrees applied to the saved images relative to the landscape sensor image."""
-        return (self.sensor_orientation if self.rotate == "auto" else int(self.rotate)) % 360
+        return int(self.rotate) if self.rotate != "auto" else 0
 
     def orient(self, img):
         """Rotate the landscape sensor image to upright portrait (or a forced angle)."""
@@ -621,8 +621,8 @@ class Session:
             elapsed = time.time() - self.started
             with open(self.dir / "session_meta.json", "w") as f:
                 json.dump({"sensor_orientation": self.sensor_orientation,
-                           "rotation_cw_deg": self.applied_rotation(),
-                           "frames_fmt": self.frames_fmt}, f)
+                    "rotation_cw_deg": self.applied_rotation(),
+                    "frames_fmt": self.frames_fmt}, f)
             with open(self.dir / "session_info.json", "w") as f:
                 json.dump({"seconds": round(elapsed, 1), "video_packets_frames": self.n_video,
                            "frames_written": self.writer.written if self.writer else 0,
@@ -696,8 +696,8 @@ def main():
                     help="save decoded frames as images (default jpg ~150 KB/frame; png is lossless but ~10x bigger). You can always re-create frames from video.h264 with extract_frames.py")
     ap.add_argument("--jpg-quality", type=int, default=95)
     ap.add_argument("--writers", type=int, default=2, help="background threads that write image files")
-    ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="auto",
-                    help="auto = upright portrait from the camera's sensor orientation; or force degrees clockwise")
+    ap.add_argument("--rotate", choices=["auto", "0", "90", "180", "270"], default="0",
+                    help="auto = apply the phone's sensor orientation; default 0 = leave frames landscape 1280x720")
     ap.add_argument("--no-h264", action="store_true", help="don't keep the raw video.h264 backup")
     ap.add_argument("--no-export", action="store_true", help="skip the automatic ORB-SLAM3/EuRoC export at session end")
     ap.add_argument("--export", metavar="SESSION_DIR", help="re-run the export on an existing session folder and exit")
